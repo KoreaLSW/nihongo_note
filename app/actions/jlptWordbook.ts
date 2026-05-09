@@ -6,11 +6,15 @@ import {
   setJlptWordMemorizedByQuizView,
   type JlptQuizMemorizedView,
 } from "@/lib/jlptWordbook";
-import { importJlptWordsFromCsv } from "@/lib/jlptWordbook";
+import { importJlptWordsFromCsv, type JlptCsvImportResult } from "@/lib/jlptWordbook";
 import { deleteJlptWordbook } from "@/lib/jlptWordbook";
 import { renameJlptWordbook } from "@/lib/jlptWordbook";
 import { updateJlptWordbookWord, removeWordFromJlptWordbook } from "@/lib/jlptWordbook";
 import { reorderJlptWordbooks } from "@/lib/jlptWordbook";
+
+type ActionFail = { ok: false; error: string };
+type ActionOk = { ok: true };
+type ImportJlptWordbookCsvActionResult = ActionFail | (ActionOk & JlptCsvImportResult);
 
 export async function createJlptWordbookAction(formData: FormData) {
   const level = (formData.get("level") as string) ?? "";
@@ -76,24 +80,26 @@ export async function setJlptWordMemorizedAction(formData: FormData) {
   }
 }
 
-export async function importJlptWordbookCsvAction(formData: FormData) {
+export async function importJlptWordbookCsvAction(
+  formData: FormData
+): Promise<ImportJlptWordbookCsvActionResult> {
   const wordbookId = (formData.get("wordbookId") as string) ?? "";
   const file = formData.get("file");
 
-  if (!wordbookId.trim()) return { ok: false, error: "단어장을 선택하세요." };
-  if (!(file instanceof File)) return { ok: false, error: "CSV 파일을 선택하세요." };
+  if (!wordbookId.trim()) return { ok: false as const, error: "단어장을 선택하세요." };
+  if (!(file instanceof File)) return { ok: false as const, error: "CSV 파일을 선택하세요." };
   if (!file.name.toLowerCase().endsWith(".csv")) {
-    return { ok: false, error: "CSV 파일만 업로드할 수 있습니다." };
+    return { ok: false as const, error: "CSV 파일만 업로드할 수 있습니다." };
   }
 
   try {
     const text = await file.text();
     const res = importJlptWordsFromCsv(wordbookId.trim(), text);
-    return { ok: true, ...res };
+    return { ok: true as const, ...res };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("importJlptWordbookCsvAction error:", e);
-    return { ok: false, error: msg };
+    return { ok: false as const, error: msg };
   }
 }
 

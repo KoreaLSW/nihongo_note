@@ -29,16 +29,16 @@ export function UploadJlptCsvForm({ wordbookId }: Props) {
     const res = await importJlptWordbookCsvAction(new FormData(e.currentTarget));
     setPending(false);
 
-    if (!res?.ok) {
-      setError(res?.error ?? "업로드 실패");
+    if (!res.ok) {
+      setError(res.error ?? "업로드 실패");
       return;
     }
 
     setResult({
-      total: res.total ?? 0,
-      inserted: res.inserted ?? 0,
-      failed: res.failed ?? 0,
-      fails: Array.isArray(res.fails) ? res.fails : [],
+      total: res.total,
+      inserted: res.inserted,
+      failed: res.failed,
+      fails: res.fails,
     });
     router.refresh();
   };
