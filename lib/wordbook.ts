@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { parse } from "csv-parse/sync";
 import { stringify } from "csv-stringify/sync";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const WORDBOOKS_DIR = "vocabulary_words";
 const MANIFEST_FILE = "wordbooks.json";
@@ -10,6 +11,7 @@ export type WordbookMeta = {
   id: string;
   name: string;
   file: string;
+  user_id?: string;
 };
 
 export type WordbookRow = {
@@ -19,6 +21,9 @@ export type WordbookRow = {
   meaning: string;
   level: string;
   created_at: string;
+  memorized?: string;
+  memorized_at?: string;
+  reviewed_at?: string;
 };
 
 function getDir(): string {
@@ -70,8 +75,24 @@ function saveManifest(list: WordbookMeta[]): void {
 }
 
 /** 단어장 목록 */
-export function getWordbookList(): WordbookMeta[] {
+function getWordbookListFromCsv(): WordbookMeta[] {
   return loadManifest();
+}
+
+export async function getWordbookList(): Promise<WordbookMeta[]> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("vocabulary_wordbooks")
+    .select("id,name")
+    .order("sort_order", { ascending: true, nullsFirst: false })
+    .order("created_at", { ascending: true });
+
+  if (error || !data) return getWordbookListFromCsv();
+  return data.map((r) => ({
+    id: String(r.id ?? ""),
+    name: String(r.name ?? ""),
+    file: "",
+  }));
 }
 
 /** 단어장 목록 순서 변경 (manifest 배열 순서 업데이트) */
@@ -102,7 +123,7 @@ export function reorderWordbooks(wordbookIds: string[]): void {
 }
 
 /** 단어장 생성 (새 CSV 파일 + manifest 추가) */
-export function createWordbook(name: string): WordbookMeta {
+export function createWordbook(name: string, userId?: string): WordbookMeta {
   const trimmed = (name ?? "").trim();
   if (!trimmed) throw new Error("name is required");
 
@@ -112,6 +133,7 @@ export function createWordbook(name: string): WordbookMeta {
     Math.random().toString(36).slice(2, 8);
   const file = `${id}.csv`;
   const meta: WordbookMeta = { id, name: trimmed, file };
+  if (userId) meta.user_id = userId;
   list.push(meta);
   saveManifest(list);
 
@@ -123,6 +145,20 @@ export function createWordbook(name: string): WordbookMeta {
   return meta;
 }
 
+export function deleteWordbook(wordbookId: string): void {
+  const id = String(wordbookId ?? "").trim();
+  if (!id) throw new Error("wordbookId is required");
+
+  const list = loadManifest();
+  const target = list.find((m) => m.id === id);
+  if (!target) throw new Error("wordbook not found");
+
+  const csvPath = path.join(getDir(), target.file);
+  if (fs.existsSync(csvPath)) fs.unlinkSync(csvPath);
+
+  saveManifest(list.filter((m) => m.id !== id));
+}
+
 function getCsvPath(wordbookId: string): string | null {
   const list = loadManifest();
   const meta = list.find((m) => m.id === wordbookId);
@@ -131,7 +167,7 @@ function getCsvPath(wordbookId: string): string | null {
 }
 
 /** 단어장 내 단어 목록 */
-export function getWordbookWords(wordbookId: string): WordbookRow[] {
+function getWordbookWordsFromCsv(wordbookId: string): WordbookRow[] {
   const csvPath = getCsvPath(wordbookId);
   if (!csvPath || !fs.existsSync(csvPath)) return [];
 
@@ -151,6 +187,84 @@ export function getWordbookWords(wordbookId: string): WordbookRow[] {
     level: r.level ?? "",
     created_at: r.created_at ?? "",
   }));
+}
+
+export async function getWordbookWords(wordbookId: string): Promise<WordbookRow[]> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("vocabulary_words")
+    .select("id,sort_order,word,reading,meaning,level,created_at")
+    .eq("wordbook_id", wordbookId)
+    .order("sort_order", { ascending: true });
+
+  if (error || !data) return getWordbookWordsFromCsv(wordbookId);
+  const rows = data.map((r) => ({
+    no: String(r.sort_order ?? ""),
+    word: String(r.word ?? ""),
+    reading: String(r.reading ?? ""),
+    meaning: String(r.meaning ?? ""),
+    level: String(r.level ?? ""),
+    created_at: String(r.created_at ?? ""),
+  }));
+  return attachKanjiProgress(supabase, rows);
+}
+
+async function attachKanjiProgress(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  rows: WordbookRow[]
+): Promise<WordbookRow[]> {
+  const words = Array.from(
+    new Set(rows.map((row) => row.word.trim()).filter(Boolean))
+  );
+  if (words.length === 0) return rows;
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return rows;
+
+  const { data: kanjiRows, error: kanjiError } = await supabase
+    .from("kanji_items")
+    .select("id,kanji")
+    .in("kanji", words);
+
+  if (kanjiError || !kanjiRows || kanjiRows.length === 0) return rows;
+
+  const kanjiIdByWord = new Map(
+    kanjiRows.map((row) => [String(row.kanji ?? ""), Number(row.id)])
+  );
+  const ids = Array.from(kanjiIdByWord.values()).filter((id) => Number.isFinite(id));
+  if (ids.length === 0) return rows;
+
+  const { data: progressRows, error: progressError } = await supabase
+    .from("user_kanji_progress")
+    .select("kanji_id,memorized,memorized_at,reviewed_at")
+    .eq("user_id", user.id)
+    .in("kanji_id", ids);
+
+  if (progressError || !progressRows) return rows;
+
+  const progressByKanjiId = new Map(
+    progressRows.map((row) => [
+      Number(row.kanji_id),
+      {
+        memorized: row.memorized ? "yes" : "no",
+        memorized_at: String(row.memorized_at ?? ""),
+        reviewed_at: String(row.reviewed_at ?? ""),
+      },
+    ])
+  );
+
+  return rows.map((row) => {
+    const kanjiId = kanjiIdByWord.get(row.word);
+    const progress = kanjiId ? progressByKanjiId.get(kanjiId) : undefined;
+    return {
+      ...row,
+      memorized: progress?.memorized ?? "no",
+      memorized_at: progress?.memorized_at ?? "",
+      reviewed_at: progress?.reviewed_at ?? "",
+    };
+  });
 }
 
 /** 단어장에 단어 추가 */
@@ -259,9 +373,21 @@ export function reorderWordbookWords(
 }
 
 /** 단어장 id로 메타 조회 */
-export function getWordbookMeta(wordbookId: string): WordbookMeta | null {
+function getWordbookMetaFromCsv(wordbookId: string): WordbookMeta | null {
   const list = loadManifest();
   return list.find((m) => m.id === wordbookId) ?? null;
+}
+
+export async function getWordbookMeta(wordbookId: string): Promise<WordbookMeta | null> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("vocabulary_wordbooks")
+    .select("id,name")
+    .eq("id", wordbookId)
+    .maybeSingle();
+
+  if (error || !data) return getWordbookMetaFromCsv(wordbookId);
+  return { id: String(data.id ?? ""), name: String(data.name ?? ""), file: "" };
 }
 
 /** 단어장 이름 변경 (manifest만 업데이트) */
@@ -284,9 +410,10 @@ export function renameWordbook(wordbookId: string, newName: string): void {
 export function getWordbookWordByNo(
   wordbookId: string,
   no: string
-): WordbookRow | null {
-  const words = getWordbookWords(wordbookId);
+): Promise<WordbookRow | null> {
+  return getWordbookWords(wordbookId).then((words) => {
   const noTrim = String(no ?? "").trim();
   const row = words.find((r) => String(r.no).trim() === noTrim);
   return row ?? null;
+  });
 }

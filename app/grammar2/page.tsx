@@ -4,7 +4,11 @@ import { CreateGrammarWordbookForm } from "./components/CreateGrammarWordbookFor
 import { WordbooksReorderPanel } from "./components/WordbooksReorderPanel";
 
 export default async function Grammar2Page() {
-  const wordbooks = getGrammarWordbookList();
+  const wordbooks = await getGrammarWordbookList();
+  const wordCounts = new Map<string, number>();
+  for (const wb of wordbooks) {
+    wordCounts.set(wb.id, (await getGrammarWordbookWords(wb.id)).length);
+  }
 
   return (
     <div className="p-8">
@@ -34,7 +38,7 @@ export default async function Grammar2Page() {
                   {wb.name}
                 </span>
                 <span className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                  {getGrammarWordbookWords(wb.id).length}개 문법
+                  {wordCounts.get(wb.id) ?? 0}개 문법
                 </span>
                 <span className="mt-0.5 text-xs text-zinc-400 dark:text-zinc-500">
                   {wb.file}

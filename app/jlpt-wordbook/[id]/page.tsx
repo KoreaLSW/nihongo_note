@@ -52,7 +52,7 @@ export default async function JlptWordbookDetailPage({
             : memorizedFilter === 'meaning'
               ? 'meaning'
               : axisDisplay;
-    const meta = getJlptWordbookMeta(id);
+    const meta = await getJlptWordbookMeta(id);
     if (!meta) {
         return (
             <div className='p-8'>
@@ -63,7 +63,7 @@ export default async function JlptWordbookDetailPage({
         );
     }
 
-    const allWords = getJlptWordbookWords(id);
+    const allWords = await getJlptWordbookWords(id);
     const words =
         memorizedFilter === 'all'
             ? allWords

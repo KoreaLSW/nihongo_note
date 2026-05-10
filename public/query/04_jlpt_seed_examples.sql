@@ -1,0 +1,25 @@
+-- 예시 INSERT (테스트용). 실제 id/값은 환경에 맞게 수정
+
+-- insert into public.jlpt_wordbooks (id, level, name)
+-- values ('sample_wordbook_1', 'n5', '테스트 단어장');
+
+-- insert into public.jlpt_words (
+--   wordbook_id,
+--   sort_order,
+--   word,
+--   meaning,
+--   hiragana,
+--   memorized_word,
+--   memorized_meaning,
+--   memorized_hiragana
+-- )
+-- values (
+--   'sample_wordbook_1',
+--   1,
+--   '見る',
+--   '보다',
+--   'みる',
+--   false,
+--   false,
+--   false
+-- );

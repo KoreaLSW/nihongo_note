@@ -24,10 +24,10 @@ export type JlptAllWordsWordbookFilter = {
 /**
  * `nowb=1`이면 빈 범위, `wb` 없으면 전체, `wb` 있으면 해당 id만(레벨에 속한 것만 유지).
  */
-export function resolveJlptLevelWordbookIdsForAllWords(
+export async function resolveJlptLevelWordbookIdsForAllWords(
   level: string,
   sp: { nowb?: string; wb?: string | string[] }
-): JlptAllWordsWordbookFilter {
+): Promise<JlptAllWordsWordbookFilter> {
   if (sp?.nowb === "1") {
     return { wordbookIds: [] };
   }
@@ -36,7 +36,7 @@ export function resolveJlptLevelWordbookIdsForAllWords(
     return { wordbookIds: undefined };
   }
   const lv = normalizeJlptLevel(level);
-  const allowed = new Set(getJlptWordbookList(lv).map((w) => w.id));
+  const allowed = new Set((await getJlptWordbookList(lv)).map((w) => w.id));
   return { wordbookIds: parsed.filter((id) => allowed.has(id)) };
 }
 
@@ -56,14 +56,14 @@ export function appendJlptWordbookFilterToSearchParams(
 }
 
 /** URL에 넣을 때: 전체 선택이면 `undefined`(쿼리 생략), manifest 순서로 정렬 */
-export function canonicalizeWordbookIdsForUrl(
+export async function canonicalizeWordbookIdsForUrl(
   level: string,
   wordbookIds: string[] | undefined
-): string[] | undefined {
+): Promise<string[] | undefined> {
   if (wordbookIds === undefined) return undefined;
   if (wordbookIds.length === 0) return [];
   const lv = normalizeJlptLevel(level);
-  const all = getJlptWordbookList(lv).map((w) => w.id);
+  const all = (await getJlptWordbookList(lv)).map((w) => w.id);
   const set = new Set(wordbookIds);
   const ordered = all.filter((id) => set.has(id));
   if (ordered.length === all.length) return undefined;
@@ -71,12 +71,12 @@ export function canonicalizeWordbookIdsForUrl(
 }
 
 /** 해당 레벨의 단어장 CSV를 manifest 순서대로 이어 붙인 목록 */
-export function getJlptLevelAllWordsFlatRows(
+export async function getJlptLevelAllWordsFlatRows(
   level: string,
   opts?: { wordbookIds?: string[] }
-): JlptLevelAllWordsFlatRow[] {
+): Promise<JlptLevelAllWordsFlatRow[]> {
   const lv = normalizeJlptLevel(level);
-  let wordbooks = getJlptWordbookList(lv);
+  let wordbooks = await getJlptWordbookList(lv);
   const ids = opts?.wordbookIds;
   if (ids !== undefined) {
     const idSet = new Set(ids);
@@ -84,7 +84,7 @@ export function getJlptLevelAllWordsFlatRows(
   }
   const flat: JlptLevelAllWordsFlatRow[] = [];
   for (const wb of wordbooks) {
-    for (const r of getJlptWordbookWords(wb.id)) {
+    for (const r of await getJlptWordbookWords(wb.id)) {
       flat.push({
         ...r,
         wordbookId: wb.id,

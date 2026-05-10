@@ -4,7 +4,11 @@ import { CreateWordbookForm } from "./components/CreateWordbookForm";
 import { WordbooksReorderPanel } from "./components/WordbooksReorderPanel";
 
 export default async function Vocabulary2Page() {
-  const wordbooks = getWordbookList();
+  const wordbooks = await getWordbookList();
+  const wordCounts = new Map<string, number>();
+  for (const wb of wordbooks) {
+    wordCounts.set(wb.id, (await getWordbookWords(wb.id)).length);
+  }
 
   return (
     <div className="p-8">
@@ -89,7 +93,7 @@ export default async function Vocabulary2Page() {
                   {wb.name}
                 </span>
                 <span className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                  {getWordbookWords(wb.id).length}개 단어
+                  {wordCounts.get(wb.id) ?? 0}개 단어
                 </span>
                 <span className="mt-0.5 text-xs text-zinc-400 dark:text-zinc-500">
                   {wb.file}

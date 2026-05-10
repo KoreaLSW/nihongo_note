@@ -82,16 +82,16 @@ export default async function JlptWordbookAllWordsQuizPage({ searchParams }: Pro
   const quizDisplayView = parseJlptQuizDisplayViewParam(qp?.view);
   const seed = qp?.seed ?? generateSeed();
 
-  const { wordbookIds: resolvedWordbookIds } = resolveJlptLevelWordbookIdsForAllWords(
+  const { wordbookIds: resolvedWordbookIds } = await resolveJlptLevelWordbookIdsForAllWords(
     selectedLevel,
     { wb: qp?.wb, nowb: pickNowb(qp?.nowb) }
   );
-  const wordbookIdsForUrl = canonicalizeWordbookIdsForUrl(
+  const wordbookIdsForUrl = await canonicalizeWordbookIdsForUrl(
     selectedLevel,
     resolvedWordbookIds
   );
 
-  const flat = getJlptLevelAllWordsFlatRows(selectedLevel, {
+  const flat = await getJlptLevelAllWordsFlatRows(selectedLevel, {
     wordbookIds: resolvedWordbookIds,
   });
   const words = filterJlptWordbookRowsForQuiz(flat, memorizedMode, quizDisplayView);
@@ -122,6 +122,18 @@ export default async function JlptWordbookAllWordsQuizPage({ searchParams }: Pro
         ? "선택된 단어장 없음"
         : `선택된 단어장 ${resolvedWordbookIds.length}개`;
 
+  const levelWordbookIdsForUrl = new Map<string, string[] | undefined>();
+  for (const level of JLPT_LEVELS) {
+    const resolved = await resolveJlptLevelWordbookIdsForAllWords(level, {
+      wb: qp?.wb,
+      nowb: pickNowb(qp?.nowb),
+    });
+    levelWordbookIdsForUrl.set(
+      level,
+      await canonicalizeWordbookIdsForUrl(level, resolved.wordbookIds)
+    );
+  }
+
   return (
     <div className="p-8">
       <QuizSeedSync seed={seed} />
@@ -142,13 +154,7 @@ export default async function JlptWordbookAllWordsQuizPage({ searchParams }: Pro
       <div className="mb-4 flex flex-wrap gap-2">
         {JLPT_LEVELS.map((level) => {
           const isActive = selectedLevel === level;
-          const idsForLevel = canonicalizeWordbookIdsForUrl(
-            level,
-            resolveJlptLevelWordbookIdsForAllWords(level, {
-              wb: qp?.wb,
-              nowb: pickNowb(qp?.nowb),
-            }).wordbookIds
-          );
+          const idsForLevel = levelWordbookIdsForUrl.get(level);
           return (
             <Link
               key={level}

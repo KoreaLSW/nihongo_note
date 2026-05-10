@@ -9,7 +9,7 @@ type Props = { params: Promise<{ no: string }> };
 
 export default async function VocabularyDetailPage({ params }: Props) {
   const { no } = await params;
-  const row = getNoteByNo(no);
+  const row = await getNoteByNo(no);
   if (!row) notFound();
 
   const kanjiDetail = getKanjiDetailByWord(row.word);

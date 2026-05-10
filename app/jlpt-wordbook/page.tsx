@@ -16,7 +16,11 @@ type Props = {
 export default async function JlptWordbookPage({ searchParams }: Props) {
   const params = searchParams ? await searchParams : undefined;
   const selectedLevel = normalizeJlptLevel(params?.level || "n5");
-  const selectedWordbooks = getJlptWordbookList(selectedLevel);
+  const selectedWordbooks = await getJlptWordbookList(selectedLevel);
+  const wordbookCounts = new Map<string, number>();
+  for (const wb of selectedWordbooks) {
+    wordbookCounts.set(wb.id, await getJlptWordbookWordsCount(wb.id));
+  }
 
   return (
     <div className="p-8">
@@ -55,7 +59,7 @@ export default async function JlptWordbookPage({ searchParams }: Props) {
           id: wb.id,
           name: wb.name,
           file: wb.file,
-          count: getJlptWordbookWordsCount(wb.id),
+          count: wordbookCounts.get(wb.id) ?? 0,
         }))}
       />
     </div>

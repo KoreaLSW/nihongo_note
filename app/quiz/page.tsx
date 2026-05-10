@@ -88,18 +88,18 @@ export default async function QuizPage({
   };
 
   if (wordbookId) {
-    const meta = getWordbookMeta(wordbookId);
-    const words = meta ? getWordbookWords(wordbookId) : [];
+    const meta = await getWordbookMeta(wordbookId);
+    const words = meta ? await getWordbookWords(wordbookId) : [];
     allRows = words.map((r) => mapWordbookRow(r));
     const levelUpper = currentLevel === "all" ? "" : currentLevel.toUpperCase();
     if (levelUpper) {
       allRows = allRows.filter((r) => (r.level ?? "").toUpperCase() === levelUpper);
     }
   } else if (allVocabulary2) {
-    const wbs = getWordbookList();
+    const wbs = await getWordbookList();
     allRows = [];
     for (const wb of wbs) {
-      for (const r of getWordbookWords(wb.id)) {
+      for (const r of await getWordbookWords(wb.id)) {
         allRows.push(mapWordbookRow(r));
       }
     }
@@ -108,7 +108,7 @@ export default async function QuizPage({
       allRows = allRows.filter((r) => (r.level ?? "").toUpperCase() === levelUpper);
     }
   } else {
-    allRows = getNotesByLevel(
+    allRows = await getNotesByLevel(
       currentLevel === "all" ? undefined : currentLevel.toUpperCase()
     );
   }
@@ -149,7 +149,7 @@ export default async function QuizPage({
     return `/quiz?${params}`;
   };
 
-  const wordbookMeta = wordbookId ? getWordbookMeta(wordbookId) : null;
+  const wordbookMeta = wordbookId ? await getWordbookMeta(wordbookId) : null;
 
 
   return (

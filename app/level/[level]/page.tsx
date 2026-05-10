@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { getKanjiByLevel } from "@/lib/kanji";
-import { getMemorizedMap } from "@/lib/memorized";
 import { getNoteWords } from "@/lib/note";
 import { getWordbookList, getWordbookWords } from "@/lib/wordbook";
 import { KanjiTableRow } from "./components/KanjiTableRow";
@@ -18,18 +17,17 @@ export default async function LevelPage({ params, searchParams }: Props) {
   const page = Math.max(1, parseInt(pageParam ?? "1", 10) || 1);
   const levelUpper = level.toUpperCase();
 
-  const { rows, total, totalPages, page: currentPage } = getKanjiByLevel(
+  const { rows, total, totalPages, page: currentPage } = await getKanjiByLevel(
     level,
     page,
     searchQuery
   );
-  const noteWords = getNoteWords();
-  const memorizedMap = getMemorizedMap();
-  const wordbooks = getWordbookList();
+  const noteWords = await getNoteWords();
+  const wordbooks = await getWordbookList();
 
   const wordToWordbookIds = new Map<string, Set<string>>();
   for (const wb of wordbooks) {
-    const words = getWordbookWords(wb.id);
+    const words = await getWordbookWords(wb.id);
     for (const r of words) {
       const w = (r.word ?? "").trim();
       if (!w) continue;
@@ -118,7 +116,7 @@ export default async function LevelPage({ params, searchParams }: Props) {
                     row={row}
                     level={level}
                     isInVocabulary={noteWords.has(row.kanji)}
-                    isMemorized={memorizedMap.get(row.kanji)?.memorized === "yes"}
+                    isMemorized={row.memorized === "yes"}
                     wordbooks={wordbooks}
                     includedWordbookIds={includedWordbookIds}
                   />

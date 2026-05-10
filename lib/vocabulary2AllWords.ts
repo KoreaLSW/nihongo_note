@@ -1,4 +1,3 @@
-import { getMemorizedMap } from "@/lib/memorized";
 import { getWordbookList, getWordbookWords } from "@/lib/wordbook";
 import type { Vocabulary2AllWordsMemorizedMode } from "@/lib/vocabulary2AllWordsNav";
 
@@ -17,13 +16,11 @@ export type Vocabulary2AllWordsFlatRow = {
 };
 
 /** 단어장 manifest 순서 → 각 CSV 행 순서로 이어 붙인 전체 목록 */
-export function getVocabulary2AllWordsFlatRows(): Vocabulary2AllWordsFlatRow[] {
-  const memorizedMap = getMemorizedMap();
-  const wordbooks = getWordbookList();
+export async function getVocabulary2AllWordsFlatRows(): Promise<Vocabulary2AllWordsFlatRow[]> {
+  const wordbooks = await getWordbookList();
   const flat: Vocabulary2AllWordsFlatRow[] = [];
   for (const wb of wordbooks) {
-    for (const r of getWordbookWords(wb.id)) {
-      const memo = memorizedMap.get(r.word);
+    for (const r of await getWordbookWords(wb.id)) {
       flat.push({
         wordbookId: wb.id,
         wordbookName: wb.name,
@@ -33,9 +30,9 @@ export function getVocabulary2AllWordsFlatRows(): Vocabulary2AllWordsFlatRow[] {
         meaning: r.meaning ?? "",
         level: r.level ?? "",
         created_at: r.created_at ?? "",
-        memorized: memo?.memorized ?? "no",
-        memorized_at: memo?.memorized_at ?? "",
-        reviewed_at: memo?.reviewed_at ?? "",
+        memorized: r.memorized ?? "no",
+        memorized_at: r.memorized_at ?? "",
+        reviewed_at: r.reviewed_at ?? "",
       });
     }
   }

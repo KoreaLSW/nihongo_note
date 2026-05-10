@@ -34,11 +34,11 @@ export default async function GrammarWordbookQuizPage({ params, searchParams }: 
   const memorizedFilter = qp?.memorized ?? "all";
   const seed = qp?.seed ?? generateSeed();
 
-  const meta = getGrammarWordbookMeta(id);
+  const meta = await getGrammarWordbookMeta(id);
   if (!meta) notFound();
 
   const memMap = getGrammarMemorizedMap();
-  const allRows = getGrammarWordbookWords(id).map((row) => {
+  const allRows = (await getGrammarWordbookWords(id)).map((row) => {
     const memo = memMap.get(row.grammar);
     return {
       ...row,

@@ -3,6 +3,7 @@ import path from "path";
 import { parse } from "csv-parse/sync";
 import { stringify } from "csv-stringify/sync";
 import type { JlptQuizMemorizedView, JlptWordbookRow } from "./jlptWordbookShared";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
   JLPT_WORDBOOK_CSV_COLUMNS,
   recomputeJlptAggregateFields,
@@ -27,6 +28,7 @@ export type JlptWordbookMeta = {
   level: JlptLevel;
   name: string;
   file: string;
+  user_id?: string;
 };
 
 export type JlptCsvImportFail = {
@@ -140,11 +142,30 @@ export function normalizeJlptLevel(level: string): JlptLevel {
   return "n5";
 }
 
-export function getJlptWordbookList(level?: string): JlptWordbookMeta[] {
+function getJlptWordbookListFromCsv(level?: string): JlptWordbookMeta[] {
   const list = loadManifest();
   if (!level) return list;
   const lv = normalizeJlptLevel(level);
   return list.filter((w) => w.level === lv);
+}
+
+export async function getJlptWordbookList(level?: string): Promise<JlptWordbookMeta[]> {
+  const supabase = await createSupabaseServerClient();
+  let query = supabase
+    .from("jlpt_wordbooks")
+    .select("id,level,name")
+    .order("sort_order", { ascending: true, nullsFirst: false })
+    .order("created_at", { ascending: true });
+  if (level) query = query.eq("level", normalizeJlptLevel(level));
+
+  const { data, error } = await query;
+  if (error || !data) return getJlptWordbookListFromCsv(level);
+  return data.map((r) => ({
+    id: String(r.id ?? ""),
+    level: normalizeJlptLevel(String(r.level ?? "")),
+    name: String(r.name ?? ""),
+    file: "",
+  }));
 }
 
 /** JLPT 단어장 목록 순서 변경 (레벨별, manifest 배열 순서 업데이트) */
@@ -183,7 +204,11 @@ export function reorderJlptWordbooks(level: string, wordbookIds: string[]): void
   saveManifest(next);
 }
 
-export function createJlptWordbook(level: string, name: string): JlptWordbookMeta {
+export function createJlptWordbook(
+  level: string,
+  name: string,
+  userId?: string
+): JlptWordbookMeta {
   const lv = normalizeJlptLevel(level);
   const trimmed = String(name ?? "").trim();
   if (!trimmed) throw new Error("name is required");
@@ -192,6 +217,7 @@ export function createJlptWordbook(level: string, name: string): JlptWordbookMet
   const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   const file = `${id}.csv`;
   const meta: JlptWordbookMeta = { id, level: lv, name: trimmed, file };
+  if (userId) meta.user_id = userId;
   list.push(meta);
   saveManifest(list);
 
@@ -257,12 +283,28 @@ function writeJlptWordbookCsv(csvPath: string, rows: JlptWordbookRow[]): void {
   fs.writeFileSync(csvPath, csv, "utf-8");
 }
 
-export function getJlptWordbookMeta(wordbookId: string): JlptWordbookMeta | null {
+function getJlptWordbookMetaFromCsv(wordbookId: string): JlptWordbookMeta | null {
   const list = loadManifest();
   return list.find((m) => m.id === wordbookId) ?? null;
 }
 
-export function getJlptWordbookWords(wordbookId: string): JlptWordbookRow[] {
+export async function getJlptWordbookMeta(wordbookId: string): Promise<JlptWordbookMeta | null> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("jlpt_wordbooks")
+    .select("id,level,name")
+    .eq("id", wordbookId)
+    .maybeSingle();
+  if (error || !data) return getJlptWordbookMetaFromCsv(wordbookId);
+  return {
+    id: String(data.id ?? ""),
+    level: normalizeJlptLevel(String(data.level ?? "")),
+    name: String(data.name ?? ""),
+    file: "",
+  };
+}
+
+function getJlptWordbookWordsFromCsv(wordbookId: string): JlptWordbookRow[] {
   const csvPath = getCsvPath(wordbookId);
   if (!csvPath || !fs.existsSync(csvPath)) return [];
 
@@ -277,6 +319,34 @@ export function getJlptWordbookWords(wordbookId: string): JlptWordbookRow[] {
   return records.map((r, i) => parseJlptWordbookRow(r, i));
 }
 
+export async function getJlptWordbookWords(wordbookId: string): Promise<JlptWordbookRow[]> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("jlpt_words")
+    .select(
+      "id,sort_order,word,meaning,hiragana,memorized_word,memorized_word_at,memorized_meaning,memorized_meaning_at,memorized_hiragana,memorized_hiragana_at,memorized,memorized_at,created_at"
+    )
+    .eq("wordbook_id", wordbookId)
+    .order("sort_order", { ascending: true });
+
+  if (error || !data) return getJlptWordbookWordsFromCsv(wordbookId);
+  return data.map((r) => ({
+    no: String(r.sort_order ?? ""),
+    word: String(r.word ?? ""),
+    meaning: String(r.meaning ?? ""),
+    hiragana: String(r.hiragana ?? ""),
+    memorized_word: r.memorized_word ? "yes" : "no",
+    memorized_word_at: String(r.memorized_word_at ?? ""),
+    memorized_meaning: r.memorized_meaning ? "yes" : "no",
+    memorized_meaning_at: String(r.memorized_meaning_at ?? ""),
+    memorized_hiragana: r.memorized_hiragana ? "yes" : "no",
+    memorized_hiragana_at: String(r.memorized_hiragana_at ?? ""),
+    memorized: r.memorized ? "yes" : "no",
+    memorized_at: String(r.memorized_at ?? ""),
+    created_at: String(r.created_at ?? ""),
+  }));
+}
+
 export function appendWordToJlptWordbook(
   wordbookId: string,
   entry: { word: string; meaning?: string; hiragana?: string }
@@ -289,7 +359,7 @@ export function appendWordToJlptWordbook(
   const hiragana = String(entry.hiragana ?? "").trim();
   if (!word) throw new Error("word is required");
 
-  const rows = getJlptWordbookWords(wordbookId);
+  const rows = getJlptWordbookWordsFromCsv(wordbookId);
   const duplicated = rows.some((r) => r.word === word);
   if (duplicated) throw new Error("duplicate: word already in this jlpt wordbook");
 
@@ -335,7 +405,7 @@ export function importJlptWordsFromCsv(wordbookId: string, csvText: string): Jlp
     trim: true,
   }) as Array<Record<string, string>>;
 
-  const currentRows = getJlptWordbookWords(wordbookId);
+  const currentRows = getJlptWordbookWordsFromCsv(wordbookId);
   const existingWords = new Set(currentRows.map((r) => r.word));
   const newWordSet = new Set<string>();
 
@@ -425,7 +495,7 @@ export function setJlptWordMemorizedByQuizView(
   const noTrim = String(no ?? "").trim();
   if (!noTrim) throw new Error("no is required");
 
-  const rows = getJlptWordbookWords(wordbookId);
+  const rows = getJlptWordbookWordsFromCsv(wordbookId);
   const idx = rows.findIndex((r) => String(r.no).trim() === noTrim);
   if (idx < 0) throw new Error("word not found");
 
@@ -464,7 +534,7 @@ export function updateJlptWordbookWord(
   if (!word) throw new Error("word is required");
   if (!meaning) throw new Error("meaning is required");
 
-  const rows = getJlptWordbookWords(wordbookId);
+  const rows = getJlptWordbookWordsFromCsv(wordbookId);
   const idx = rows.findIndex((r) => String(r.no).trim() === noTrim);
   if (idx < 0) throw new Error("word not found");
 
@@ -488,7 +558,7 @@ export function removeWordFromJlptWordbook(wordbookId: string, no: string): void
   const noTrim = String(no ?? "").trim();
   if (!noTrim) throw new Error("no is required");
 
-  const rows = getJlptWordbookWords(wordbookId);
+  const rows = getJlptWordbookWordsFromCsv(wordbookId);
   const filtered = rows.filter((r) => String(r.no).trim() !== noTrim);
   if (filtered.length === rows.length) throw new Error("word not found");
 
@@ -496,7 +566,14 @@ export function removeWordFromJlptWordbook(wordbookId: string, no: string): void
   writeJlptWordbookCsv(csvPath, renumbered);
 }
 
-export function getJlptWordbookWordsCount(wordbookId: string): number {
+export async function getJlptWordbookWordsCount(wordbookId: string): Promise<number> {
+  const supabase = await createSupabaseServerClient();
+  const { count, error } = await supabase
+    .from("jlpt_words")
+    .select("id", { count: "exact", head: true })
+    .eq("wordbook_id", wordbookId);
+  if (!error && count !== null) return count;
+
   const list = loadManifest();
   const meta = list.find((m) => m.id === wordbookId);
   if (!meta) return 0;

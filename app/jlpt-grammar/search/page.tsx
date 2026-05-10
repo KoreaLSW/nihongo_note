@@ -1,6 +1,5 @@
 import Link from "next/link";
-import fs from "fs/promises";
-import path from "path";
+import { searchJlptGrammarItems, type JlptGrammarItem } from "@/lib/jlptGrammar";
 
 const LEVELS = ["n3", "n2", "n1"] as const;
 
@@ -8,26 +7,7 @@ type Props = {
   searchParams?: Promise<{ q?: string; page?: string }>;
 };
 
-type GrammarDetailItem = {
-  no: number;
-  title?: string;
-  meaning?: string;
-  connection?: string;
-};
-
-type SearchHit = GrammarDetailItem & { level: (typeof LEVELS)[number] };
-
-async function loadGrammarDetail(level: (typeof LEVELS)[number]): Promise<GrammarDetailItem[]> {
-  const filePath = path.join(
-    process.cwd(),
-    "public",
-    "grammar_json",
-    `${level}_detail.json`
-  );
-  const raw = await fs.readFile(filePath, "utf-8");
-  const parsed = JSON.parse(raw) as unknown;
-  return Array.isArray(parsed) ? (parsed as GrammarDetailItem[]) : [];
-}
+type SearchHit = JlptGrammarItem & { level: (typeof LEVELS)[number] };
 
 function clampPage(p: number, totalPages: number): number {
   if (!Number.isFinite(p) || p < 1) return 1;
@@ -50,20 +30,7 @@ export default async function JlptGrammarSearchPage({ searchParams }: Props) {
 
   const query = q.toLowerCase();
 
-  const lists = await Promise.all(
-    LEVELS.map(async (lv) => {
-      const items = await loadGrammarDetail(lv);
-      return items.map((x) => ({ ...x, level: lv }) satisfies SearchHit);
-    })
-  );
-  const all = lists.flat();
-
-  const filtered = query
-    ? all.filter((x) => {
-        const hay = `${x.title ?? ""}\n${x.meaning ?? ""}\n${x.connection ?? ""}`.toLowerCase();
-        return hay.includes(query);
-      })
-    : [];
+  const filtered = query ? ((await searchJlptGrammarItems(q)) as SearchHit[]) : [];
 
   const PAGE_SIZE = 12;
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
@@ -131,8 +98,15 @@ export default async function JlptGrammarSearchPage({ searchParams }: Props) {
                       {item.title ?? "(제목 없음)"}
                     </div>
                   </div>
-                  <div className="shrink-0 text-sm text-zinc-400 transition group-hover:text-zinc-700 dark:text-zinc-500 dark:group-hover:text-zinc-200">
-                    →
+                  <div className="flex shrink-0 items-center gap-2">
+                    {item.memorized === "yes" ? (
+                      <span className="rounded-full bg-sky-100 px-2.5 py-1 text-xs font-semibold text-sky-800 dark:bg-sky-900/40 dark:text-sky-200">
+                        암기
+                      </span>
+                    ) : null}
+                    <span className="text-sm text-zinc-400 transition group-hover:text-zinc-700 dark:text-zinc-500 dark:group-hover:text-zinc-200">
+                      →
+                    </span>
                   </div>
                 </div>
 

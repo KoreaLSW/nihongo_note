@@ -1,24 +1,117 @@
 "use server";
 
-import {
-  createGrammarWordbook as createGrammarWordbookLib,
-  appendGrammarToWordbook,
-  removeGrammarFromWordbook,
-  reorderGrammarWordbookWords,
-  reorderGrammarWordbooks,
-  renameGrammarWordbook,
-  updateGrammarWordbookWord,
-} from "@/lib/grammarWordbook";
-import {
-  moveGrammarMemorized,
-  setGrammarMemorized,
-} from "@/lib/grammarMemorized";
+import { setGrammarMemorized } from "@/lib/grammarMemorized";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+
+function getNowIso(): string {
+  return new Date().toISOString();
+}
+
+function makeId(): string {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+async function getAuthedSupabase() {
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
+
+  if (error || !user) throw new Error("로그인이 필요합니다.");
+  return { supabase, user };
+}
+
+async function assertGrammarWordbookOwner(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  userId: string,
+  wordbookId: string
+): Promise<void> {
+  const { data, error } = await supabase
+    .from("grammar_wordbooks")
+    .select("id")
+    .eq("id", wordbookId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) throw new Error("문법 단어장을 찾을 수 없습니다.");
+}
+
+async function getNextGrammarWordbookSortOrder(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  userId: string
+): Promise<number> {
+  const { data, error } = await supabase
+    .from("grammar_wordbooks")
+    .select("sort_order")
+    .eq("user_id", userId)
+    .order("sort_order", { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return Number(data?.sort_order ?? 0) + 1;
+}
+
+async function getNextGrammarItemSortOrder(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  wordbookId: string
+): Promise<number> {
+  const { data, error } = await supabase
+    .from("grammar_wordbook_items")
+    .select("sort_order")
+    .eq("wordbook_id", wordbookId)
+    .order("sort_order", { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return Number(data?.sort_order ?? 0) + 1;
+}
+
+async function resequenceGrammarItemSortOrder(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  wordbookId: string
+): Promise<void> {
+  const { data, error } = await supabase
+    .from("grammar_wordbook_items")
+    .select("id")
+    .eq("wordbook_id", wordbookId)
+    .order("sort_order", { ascending: true })
+    .order("created_at", { ascending: true });
+
+  if (error) throw error;
+  if (!data) return;
+
+  for (let i = 0; i < data.length; i++) {
+    const { error: updateError } = await supabase
+      .from("grammar_wordbook_items")
+      .update({ sort_order: i + 1, updated_at: getNowIso() })
+      .eq("id", data[i].id);
+    if (updateError) throw updateError;
+  }
+}
 
 export async function createGrammarWordbook(formData: FormData) {
   const name = (formData.get("name") as string) ?? "";
   if (!name.trim()) return { ok: false, error: "문법 단어장 이름을 입력하세요." };
+
   try {
-    createGrammarWordbookLib(name.trim());
+    const { supabase, user } = await getAuthedSupabase();
+    const now = getNowIso();
+    const { error: insertError } = await supabase
+      .from("grammar_wordbooks")
+      .insert({
+        id: makeId(),
+        user_id: user.id,
+        name: name.trim(),
+        sort_order: await getNextGrammarWordbookSortOrder(supabase, user.id),
+        created_at: now,
+        updated_at: now,
+      });
+
+    if (insertError) throw insertError;
     return { ok: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -27,34 +120,60 @@ export async function createGrammarWordbook(formData: FormData) {
   }
 }
 
-export async function insertToGrammarWordbook(formData: FormData) {
-  const wordbookId = (formData.get("wordbookId") as string) ?? "";
-  const grammar = (formData.get("grammar") as string) ?? "";
-  const shape = (formData.get("shape") as string) ?? "";
-  const meaning = (formData.get("meaning") as string) ?? "";
-  const interpretation = (formData.get("interpretation") as string) ?? "";
-  const example = (formData.get("example") as string) ?? "";
+export async function insertGrammarRowToWordbook(params: {
+  wordbookId: string;
+  grammar: string;
+  shape?: string;
+  meaning?: string;
+  interpretation?: string;
+  example?: string;
+}) {
+  const wordbookId = String(params.wordbookId ?? "").trim();
+  const grammar = String(params.grammar ?? "").trim();
 
-  if (!wordbookId.trim()) return { ok: false, error: "단어장을 선택하세요." };
-  if (!grammar.trim()) return { ok: false, error: "grammar is required" };
+  if (!wordbookId) return { ok: false, error: "단어장을 선택하세요." };
+  if (!grammar) return { ok: false, error: "grammar is required" };
 
   try {
-    appendGrammarToWordbook(wordbookId.trim(), {
-      grammar: grammar.trim(),
-      shape: (shape ?? "").trim(),
-      meaning: (meaning ?? "").trim(),
-      interpretation: (interpretation ?? "").trim(),
-      example: (example ?? "").trim(),
-    });
+    const { supabase, user } = await getAuthedSupabase();
+    await assertGrammarWordbookOwner(supabase, user.id, wordbookId);
+
+    const now = getNowIso();
+    const { error: insertError } = await supabase
+      .from("grammar_wordbook_items")
+      .insert({
+        wordbook_id: wordbookId,
+        sort_order: await getNextGrammarItemSortOrder(supabase, wordbookId),
+        grammar,
+        shape: String(params.shape ?? "").trim(),
+        meaning: String(params.meaning ?? "").trim(),
+        interpretation: String(params.interpretation ?? "").trim(),
+        example: String(params.example ?? "").trim(),
+        created_at: now,
+        updated_at: now,
+      });
+
+    if (insertError) throw insertError;
     return { ok: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    if (msg.startsWith("duplicate")) {
+    if (msg.startsWith("duplicate") || msg.includes("duplicate key")) {
       return { ok: false, error: "이미 이 문법 단어장에 있는 문법입니다." };
     }
-    console.error("insertToGrammarWordbook error:", e);
+    console.error("insertGrammarRowToWordbook error:", e);
     return { ok: false, error: msg };
   }
+}
+
+export async function insertToGrammarWordbook(formData: FormData) {
+  return insertGrammarRowToWordbook({
+    wordbookId: (formData.get("wordbookId") as string) ?? "",
+    grammar: (formData.get("grammar") as string) ?? "",
+    shape: (formData.get("shape") as string) ?? "",
+    meaning: (formData.get("meaning") as string) ?? "",
+    interpretation: (formData.get("interpretation") as string) ?? "",
+    example: (formData.get("example") as string) ?? "",
+  });
 }
 
 export async function deleteFromGrammarWordbook(formData: FormData) {
@@ -65,13 +184,26 @@ export async function deleteFromGrammarWordbook(formData: FormData) {
   if (!grammar.trim()) return { ok: false, error: "grammar is required" };
 
   try {
-    removeGrammarFromWordbook(wordbookId.trim(), grammar.trim());
+    const { supabase, user } = await getAuthedSupabase();
+    const wbId = wordbookId.trim();
+    await assertGrammarWordbookOwner(supabase, user.id, wbId);
+
+    const { data, error } = await supabase
+      .from("grammar_wordbook_items")
+      .delete()
+      .eq("wordbook_id", wbId)
+      .eq("grammar", grammar.trim())
+      .select("id");
+
+    if (error) throw error;
+    if (!data || data.length === 0) {
+      return { ok: false, error: "문법 단어장에 없는 문법입니다." };
+    }
+
+    await resequenceGrammarItemSortOrder(supabase, wbId);
     return { ok: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    if (msg === "grammar not found") {
-      return { ok: false, error: "문법 단어장에 없는 문법입니다." };
-    }
     console.error("deleteFromGrammarWordbook error:", e);
     return { ok: false, error: msg };
   }
@@ -87,7 +219,23 @@ export async function reorderGrammarWordbookWordsAction(
     return { ok: false, error: "순서 데이터가 올바르지 않습니다." };
 
   try {
-    reorderGrammarWordbookWords(wordbookId.trim(), grammarOrder);
+    const { supabase, user } = await getAuthedSupabase();
+    const wbId = wordbookId.trim();
+    await assertGrammarWordbookOwner(supabase, user.id, wbId);
+
+    const cleaned = grammarOrder
+      .map((grammar) => String(grammar ?? "").trim())
+      .filter(Boolean);
+
+    for (let i = 0; i < cleaned.length; i++) {
+      const { error } = await supabase
+        .from("grammar_wordbook_items")
+        .update({ sort_order: i + 1, updated_at: getNowIso() })
+        .eq("wordbook_id", wbId)
+        .eq("grammar", cleaned[i]);
+      if (error) throw error;
+    }
+
     return { ok: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -104,7 +252,19 @@ export async function renameGrammarWordbookAction(formData: FormData) {
   if (!name.trim()) return { ok: false, error: "문법 단어장 이름을 입력하세요." };
 
   try {
-    renameGrammarWordbook(wordbookId.trim(), name.trim());
+    const { supabase, user } = await getAuthedSupabase();
+    const { data, error } = await supabase
+      .from("grammar_wordbooks")
+      .update({ name: name.trim(), updated_at: getNowIso() })
+      .eq("id", wordbookId.trim())
+      .eq("user_id", user.id)
+      .select("id");
+
+    if (error) throw error;
+    if (!data || data.length === 0) {
+      return { ok: false, error: "문법 단어장을 찾을 수 없습니다." };
+    }
+
     return { ok: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -117,8 +277,22 @@ export async function reorderGrammarWordbooksAction(wordbookIds: string[]) {
   if (!Array.isArray(wordbookIds)) {
     return { ok: false, error: "순서 데이터가 올바르지 않습니다." };
   }
+
   try {
-    reorderGrammarWordbooks(wordbookIds);
+    const { supabase, user } = await getAuthedSupabase();
+    const cleaned = wordbookIds
+      .map((id) => String(id ?? "").trim())
+      .filter(Boolean);
+
+    for (let i = 0; i < cleaned.length; i++) {
+      const { error } = await supabase
+        .from("grammar_wordbooks")
+        .update({ sort_order: i + 1, updated_at: getNowIso() })
+        .eq("id", cleaned[i])
+        .eq("user_id", user.id);
+      if (error) throw error;
+    }
+
     return { ok: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -146,7 +320,6 @@ export async function setGrammarMemorizedAction(formData: FormData) {
 export async function updateGrammarWordbookWordAction(formData: FormData) {
   const wordbookId = (formData.get("wordbookId") as string) ?? "";
   const no = (formData.get("no") as string) ?? "";
-  const oldGrammar = (formData.get("oldGrammar") as string) ?? "";
   const grammar = (formData.get("grammar") as string) ?? "";
   const shape = (formData.get("shape") as string) ?? "";
   const meaning = (formData.get("meaning") as string) ?? "";
@@ -158,25 +331,63 @@ export async function updateGrammarWordbookWordAction(formData: FormData) {
   if (!grammar.trim()) return { ok: false, error: "grammar is required" };
 
   try {
-    updateGrammarWordbookWord(wordbookId.trim(), no.trim(), {
-      grammar: grammar.trim(),
-      shape: shape.trim(),
-      meaning: meaning.trim(),
-      interpretation: interpretation.trim(),
-      example: example.trim(),
-    });
+    const { supabase, user } = await getAuthedSupabase();
+    const wbId = wordbookId.trim();
+    await assertGrammarWordbookOwner(supabase, user.id, wbId);
 
-    const oldG = oldGrammar.trim();
-    if (oldG && oldG !== grammar.trim()) {
-      // 문법 키 변경 시 암기 정보도 같이 이동
-      moveGrammarMemorized(oldG, grammar.trim());
+    const { data, error } = await supabase
+      .from("grammar_wordbook_items")
+      .update({
+        grammar: grammar.trim(),
+        shape: shape.trim(),
+        meaning: meaning.trim(),
+        interpretation: interpretation.trim(),
+        example: example.trim(),
+        updated_at: getNowIso(),
+      })
+      .eq("wordbook_id", wbId)
+      .eq("sort_order", parseInt(no.trim(), 10) || -1)
+      .select("id");
+
+    if (error) throw error;
+    if (!data || data.length === 0) {
+      return { ok: false, error: "문법 단어장에 없는 문법입니다." };
     }
 
     return { ok: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    if (msg.startsWith("duplicate") || msg.includes("duplicate key")) {
+      return { ok: false, error: "이미 이 문법 단어장에 있는 문법입니다." };
+    }
     console.error("updateGrammarWordbookWord error:", e);
     return { ok: false, error: msg };
   }
 }
 
+export async function deleteGrammarWordbookAction(formData: FormData) {
+  const wordbookId = (formData.get("wordbookId") as string) ?? "";
+
+  if (!wordbookId.trim()) return { ok: false, error: "단어장을 선택하세요." };
+
+  try {
+    const { supabase, user } = await getAuthedSupabase();
+    const { data, error } = await supabase
+      .from("grammar_wordbooks")
+      .delete()
+      .eq("id", wordbookId.trim())
+      .eq("user_id", user.id)
+      .select("id");
+
+    if (error) throw error;
+    if (!data || data.length === 0) {
+      return { ok: false, error: "문법 단어장을 찾을 수 없습니다." };
+    }
+
+    return { ok: true };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("deleteGrammarWordbook error:", e);
+    return { ok: false, error: msg };
+  }
+}

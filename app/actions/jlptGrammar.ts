@@ -2,7 +2,8 @@
 
 import fs from "fs";
 import path from "path";
-import { appendGrammarToWordbook } from "@/lib/grammarWordbook";
+import { insertGrammarRowToWordbook } from "@/app/actions/grammarWordbook";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 type GrammarDetailItem = {
   no: number;
@@ -79,6 +80,10 @@ function saveAudioIndex(idx: AudioIndex): void {
   fs.writeFileSync(p, JSON.stringify(idx, null, 2), "utf-8");
 }
 
+function getNowIso(): string {
+  return new Date().toISOString();
+}
+
 function buildAllExampleText(item: GrammarDetailItem): string {
   const items = item.examples_items ?? [];
   const examplesWithAudio: string[] = [];
@@ -153,13 +158,15 @@ export async function importJlptGrammarToWordbook(formData: FormData) {
     const interpretation = String(item.description ?? "").trim();
     const example = buildAllExampleText(item);
 
-    appendGrammarToWordbook(wordbookId, {
+    const insertRes = await insertGrammarRowToWordbook({
+      wordbookId,
       grammar,
       shape,
       meaning,
       interpretation,
       example,
     });
+    if (!insertRes.ok) return insertRes;
 
     // 오디오 인덱스: CSV 형식 유지하면서 음성만 별도 저장(예문 전체)
     const examplesAudios = buildAllExampleAudios(item);
@@ -176,6 +183,68 @@ export async function importJlptGrammarToWordbook(formData: FormData) {
       return { ok: false, error: "이미 이 문법 단어장에 있는 문법입니다." };
     }
     console.error("importJlptGrammarToWordbook error:", e);
+    return { ok: false, error: msg };
+  }
+}
+
+export async function setJlptGrammarMemorizedAction(formData: FormData) {
+  const levelRaw = String(formData.get("level") ?? "").trim().toLowerCase();
+  const noRaw = String(formData.get("no") ?? "").trim();
+  const value = String(formData.get("value") ?? "no").trim();
+
+  if (!LEVELS.includes(levelRaw as Level)) {
+    return { ok: false, error: "레벨이 올바르지 않습니다." };
+  }
+
+  const no = Number.parseInt(noRaw, 10);
+  if (!Number.isFinite(no) || no <= 0) {
+    return { ok: false, error: "번호가 올바르지 않습니다." };
+  }
+
+  try {
+    const supabase = await createSupabaseServerClient();
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      return { ok: false, error: "로그인이 필요합니다." };
+    }
+
+    const { data: grammar, error: grammarError } = await supabase
+      .from("jlpt_grammar_items")
+      .select("id")
+      .eq("level", levelRaw)
+      .eq("no", no)
+      .maybeSingle();
+
+    if (grammarError) throw grammarError;
+    if (!grammar?.id) {
+      return { ok: false, error: "문법 데이터를 찾지 못했습니다." };
+    }
+
+    const memorized = value === "yes";
+    const now = getNowIso();
+    const { error: progressError } = await supabase
+      .from("user_jlpt_grammar_progress")
+      .upsert(
+        {
+          user_id: user.id,
+          grammar_id: grammar.id,
+          memorized,
+          memorized_at: memorized ? now : null,
+          updated_at: now,
+        },
+        { onConflict: "user_id,grammar_id" }
+      );
+
+    if (progressError) throw progressError;
+
+    return { ok: true };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("setJlptGrammarMemorizedAction error:", e);
     return { ok: false, error: msg };
   }
 }

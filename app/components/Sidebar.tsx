@@ -123,7 +123,7 @@ export default function Sidebar() {
                 : "bg-amber-500 text-white hover:bg-amber-600 dark:bg-amber-600 dark:hover:bg-amber-700"
             }`}
           >
-            퀴즈
+            한자퀴즈
           </Link>
           <Link
             href="/vocabulary"

@@ -28,7 +28,7 @@ export default async function VocabularyPage({ searchParams }: Props) {
         total,
         totalPages,
         page: currentPage,
-    } = getNotes(
+    } = await getNotes(
         page,
         level === 'all' ? undefined : level,
         searchQuery,

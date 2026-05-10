@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { parse } from "csv-parse/sync";
 import { stringify } from "csv-stringify/sync";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const GRAMMAR_WORDBOOKS_DIR = "grammar_wordbooks";
 const MANIFEST_FILE = "grammar_wordbooks.json";
@@ -10,6 +11,7 @@ export type GrammarWordbookMeta = {
   id: string;
   name: string;
   file: string;
+  user_id?: string;
 };
 
 export type GrammarWordbookRow = {
@@ -67,12 +69,31 @@ function saveManifest(list: GrammarWordbookMeta[]): void {
 }
 
 /** 문법 단어장 목록 */
-export function getGrammarWordbookList(): GrammarWordbookMeta[] {
+function getGrammarWordbookListFromCsv(): GrammarWordbookMeta[] {
   return loadManifest();
 }
 
+export async function getGrammarWordbookList(): Promise<GrammarWordbookMeta[]> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("grammar_wordbooks")
+    .select("id,name")
+    .order("sort_order", { ascending: true, nullsFirst: false })
+    .order("created_at", { ascending: true });
+
+  if (error || !data) return getGrammarWordbookListFromCsv();
+  return data.map((r) => ({
+    id: String(r.id ?? ""),
+    name: String(r.name ?? ""),
+    file: "",
+  }));
+}
+
 /** 문법 단어장 생성 (새 CSV 파일 + manifest 추가) */
-export function createGrammarWordbook(name: string): GrammarWordbookMeta {
+export function createGrammarWordbook(
+  name: string,
+  userId?: string
+): GrammarWordbookMeta {
   const trimmed = (name ?? "").trim();
   if (!trimmed) throw new Error("name is required");
 
@@ -81,6 +102,7 @@ export function createGrammarWordbook(name: string): GrammarWordbookMeta {
   const file = `${id}.csv`;
 
   const meta: GrammarWordbookMeta = { id, name: trimmed, file };
+  if (userId) meta.user_id = userId;
   list.push(meta);
   saveManifest(list);
 
@@ -98,6 +120,20 @@ export function createGrammarWordbook(name: string): GrammarWordbookMeta {
   fs.writeFileSync(csvPath, csv, "utf-8");
 
   return meta;
+}
+
+export function deleteGrammarWordbook(wordbookId: string): void {
+  const id = String(wordbookId ?? "").trim();
+  if (!id) throw new Error("wordbookId is required");
+
+  const list = loadManifest();
+  const target = list.find((m) => m.id === id);
+  if (!target) throw new Error("wordbook not found");
+
+  const csvPath = path.join(getDir(), target.file);
+  if (fs.existsSync(csvPath)) fs.unlinkSync(csvPath);
+
+  saveManifest(list.filter((m) => m.id !== id));
 }
 
 /** 문법 단어장 id로 CSV 경로 조회 */
@@ -127,7 +163,7 @@ export function renameGrammarWordbook(
 }
 
 /** 문법 단어장 내 단어 목록 */
-export function getGrammarWordbookWords(
+function getGrammarWordbookWordsFromCsv(
   wordbookId: string
 ): GrammarWordbookRow[] {
   const csvPath = getCsvPath(wordbookId);
@@ -150,6 +186,28 @@ export function getGrammarWordbookWords(
     interpretation: r.interpretation ?? r.해석 ?? r.translation ?? "",
     example: r.example ?? r.예문 ?? "",
     created_at: r.created_at ?? "",
+  }));
+}
+
+export async function getGrammarWordbookWords(
+  wordbookId: string
+): Promise<GrammarWordbookRow[]> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("grammar_wordbook_items")
+    .select("id,sort_order,grammar,shape,meaning,interpretation,example,created_at")
+    .eq("wordbook_id", wordbookId)
+    .order("sort_order", { ascending: true });
+
+  if (error || !data) return getGrammarWordbookWordsFromCsv(wordbookId);
+  return data.map((r) => ({
+    no: String(r.sort_order ?? ""),
+    grammar: String(r.grammar ?? ""),
+    shape: String(r.shape ?? ""),
+    meaning: String(r.meaning ?? ""),
+    interpretation: String(r.interpretation ?? ""),
+    example: String(r.example ?? ""),
+    created_at: String(r.created_at ?? ""),
   }));
 }
 
@@ -368,19 +426,33 @@ export function updateGrammarWordbookWord(
 }
 
 /** 문법 단어장 id로 메타 조회 */
-export function getGrammarWordbookMeta(
+function getGrammarWordbookMetaFromCsv(
   wordbookId: string
 ): GrammarWordbookMeta | null {
   const list = loadManifest();
   return list.find((m) => m.id === wordbookId) ?? null;
 }
 
+export async function getGrammarWordbookMeta(
+  wordbookId: string
+): Promise<GrammarWordbookMeta | null> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("grammar_wordbooks")
+    .select("id,name")
+    .eq("id", wordbookId)
+    .maybeSingle();
+
+  if (error || !data) return getGrammarWordbookMetaFromCsv(wordbookId);
+  return { id: String(data.id ?? ""), name: String(data.name ?? ""), file: "" };
+}
+
 /** 문법 단어장 내 no에 해당하는 문법 1건 */
-export function getGrammarWordbookWordByNo(
+export async function getGrammarWordbookWordByNo(
   wordbookId: string,
   no: string
-): GrammarWordbookRow | null {
-  const words = getGrammarWordbookWords(wordbookId);
+): Promise<GrammarWordbookRow | null> {
+  const words = await getGrammarWordbookWords(wordbookId);
   const noTrim = String(no ?? "").trim();
   const row = words.find((r) => String(r.no).trim() === noTrim);
   return row ?? null;

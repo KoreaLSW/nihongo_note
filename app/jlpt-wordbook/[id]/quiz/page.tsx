@@ -48,7 +48,7 @@ export default async function JlptWordbookQuizPage({ params, searchParams }: Pro
   const quizDisplayView = parseJlptQuizDisplayViewParam(qp?.view);
   const seed = qp?.seed ?? generateSeed();
 
-  const meta = getJlptWordbookMeta(id);
+  const meta = await getJlptWordbookMeta(id);
   if (!meta) {
     return (
       <div className="p-8">
@@ -57,7 +57,7 @@ export default async function JlptWordbookQuizPage({ params, searchParams }: Pro
     );
   }
 
-  const allWords = getJlptWordbookWords(id);
+  const allWords = await getJlptWordbookWords(id);
   const words = filterJlptWordbookRowsForQuiz(allWords, memorizedFilter, quizDisplayView);
   const rows = seededStableSort(words, seed, (w) => `${w.no}:${w.word}`);
 

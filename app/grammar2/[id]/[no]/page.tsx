@@ -19,13 +19,13 @@ export default async function GrammarWordbookWordDetailPage({
 }: Props) {
   const { id, no } = await params;
 
-  const meta = getGrammarWordbookMeta(id);
+  const meta = await getGrammarWordbookMeta(id);
   if (!meta) notFound();
 
-  const row = getGrammarWordbookWordByNo(id, no);
+  const row = await getGrammarWordbookWordByNo(id, no);
   if (!row) notFound();
 
-  const words = getGrammarWordbookWords(id);
+  const words = await getGrammarWordbookWords(id);
   const currentIndex = words.findIndex(
     (w) => String(w.no).trim() === String(row.no).trim()
   );

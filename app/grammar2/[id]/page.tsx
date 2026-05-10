@@ -24,10 +24,10 @@ export default async function GrammarWordbookDetailPage({
 }: Props) {
   const { id } = await params;
   const { page: pageParam } = await searchParams;
-  const meta = getGrammarWordbookMeta(id);
+  const meta = await getGrammarWordbookMeta(id);
   if (!meta) notFound();
 
-  const allWords = getGrammarWordbookWords(id);
+  const allWords = await getGrammarWordbookWords(id);
   const total = allWords.length;
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
   const page = Math.max(1, parseInt(pageParam ?? "1", 10) || 1);

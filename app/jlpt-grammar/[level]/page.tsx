@@ -1,34 +1,15 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import fs from "fs/promises";
-import path from "path";
 import { getGrammarWordbookList, getGrammarWordbookWords } from "@/lib/grammarWordbook";
-
-const LEVELS = ["n3", "n2", "n1"] as const;
+import {
+  getJlptGrammarItems,
+  JLPT_GRAMMAR_LEVELS as LEVELS,
+} from "@/lib/jlptGrammar";
 
 type Props = {
   params: Promise<{ level: string }>;
   searchParams?: Promise<{ q?: string; page?: string }>;
 };
-
-type GrammarDetailItem = {
-  no: number;
-  title?: string;
-  meaning?: string;
-  connection?: string;
-};
-
-async function loadGrammarDetail(level: string): Promise<GrammarDetailItem[]> {
-  const filePath = path.join(
-    process.cwd(),
-    "public",
-    "grammar_json",
-    `${level}_detail.json`
-  );
-  const raw = await fs.readFile(filePath, "utf-8");
-  const parsed = JSON.parse(raw) as unknown;
-  return Array.isArray(parsed) ? (parsed as GrammarDetailItem[]) : [];
-}
 
 function normalizeAudioUrl(u: string): string {
   const s = String(u ?? "").trim();
@@ -61,7 +42,7 @@ export default async function JlptGrammarLevelPage({ params, searchParams }: Pro
   const q = String(sp.q ?? "").trim();
   const pageRaw = String(sp.page ?? "").trim();
 
-  const detailList = await loadGrammarDetail(level);
+  const detailList = await getJlptGrammarItems(level as (typeof LEVELS)[number]);
   const query = q.toLowerCase();
   const filtered = query
     ? detailList.filter((x) => {
@@ -77,10 +58,10 @@ export default async function JlptGrammarLevelPage({ params, searchParams }: Pro
   const start = (page - 1) * PAGE_SIZE;
   const pageItems = filtered.slice(start, start + PAGE_SIZE);
 
-  const wordbooks = getGrammarWordbookList();
+  const wordbooks = await getGrammarWordbookList();
   const inWordbookSet = new Set<string>();
   for (const wb of wordbooks) {
-    for (const w of getGrammarWordbookWords(wb.id)) {
+    for (const w of await getGrammarWordbookWords(wb.id)) {
       const g = String(w.grammar ?? "").trim();
       if (g) inWordbookSet.add(g);
     }
@@ -152,6 +133,11 @@ export default async function JlptGrammarLevelPage({ params, searchParams }: Pro
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
+                    {item.memorized === "yes" ? (
+                      <span className="rounded-full bg-sky-100 px-2.5 py-1 text-xs font-semibold text-sky-800 dark:bg-sky-900/40 dark:text-sky-200">
+                        암기
+                      </span>
+                    ) : null}
                     {inWordbookSet.has(String(item.title ?? "").trim()) ? (
                       <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
                         추가됨

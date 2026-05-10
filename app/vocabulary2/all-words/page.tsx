@@ -21,7 +21,7 @@ export default async function AllVocabulary2WordsPage({ searchParams }: Props) {
   const page = Math.max(1, parseInt(pageParam, 10) || 1);
 
   const kanjiReadings = getKanjiReadingsMap();
-  const flat = getVocabulary2AllWordsFlatRows();
+  const flat = await getVocabulary2AllWordsFlatRows();
   const filtered = filterVocabulary2AllWordsFlat(flat, memorizedModeParam);
 
   const total = filtered.length;

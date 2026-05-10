@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { parse } from "csv-parse/sync";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const PER_PAGE = 10;
 
@@ -32,7 +33,7 @@ function getCsvPathForLevel(level: string): string {
   return getCsvPath();
 }
 
-export function getKanjiByLevel(
+function getKanjiByLevelFromCsv(
   level: string,
   page: number = 1,
   searchQuery?: string
@@ -84,6 +85,59 @@ export function getKanjiByLevel(
     total,
     totalPages,
     page: safePage,
+  };
+}
+
+export async function getKanjiByLevel(
+  level: string,
+  page: number = 1,
+  searchQuery?: string
+): Promise<KanjiListResult> {
+  const levelLower = level.toLowerCase();
+  const isAll = levelLower === "all";
+  const safePage = Math.max(1, page);
+  const from = (safePage - 1) * PER_PAGE;
+  const to = from + PER_PAGE - 1;
+
+  const supabase = await createSupabaseServerClient();
+  let query = supabase
+    .from("kanji_items")
+    .select("id,no,kanji,meaning_quoted,level,user_kanji_progress(memorized)", {
+      count: "exact",
+    })
+    .order("level", { ascending: false })
+    .order("no", { ascending: true })
+    .range(from, to);
+
+  if (!isAll) query = query.eq("level", levelLower);
+  const q = (searchQuery ?? "").trim();
+  if (q) query = query.ilike("meaning_quoted", `%${q}%`);
+
+  const { data, error, count } = await query;
+  if (error || !data || count === null) {
+    return getKanjiByLevelFromCsv(level, page, searchQuery);
+  }
+
+  const total = count;
+  const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
+  const currentPage = Math.max(1, Math.min(safePage, totalPages));
+
+  return {
+    rows: data.map((r) => {
+      const progress = Array.isArray(r.user_kanji_progress)
+        ? r.user_kanji_progress[0]
+        : undefined;
+      return {
+        no: String(r.no ?? ""),
+        kanji: String(r.kanji ?? ""),
+        meaning_quoted: String(r.meaning_quoted ?? ""),
+        memorized: progress?.memorized ? "yes" : "no",
+        level: String(r.level ?? "").toUpperCase(),
+      };
+    }),
+    total,
+    totalPages,
+    page: currentPage,
   };
 }
 

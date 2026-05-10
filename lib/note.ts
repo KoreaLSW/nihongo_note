@@ -3,6 +3,7 @@ import path from "path";
 import { parse } from "csv-parse/sync";
 import { stringify } from "csv-stringify/sync";
 import { getMemorizedMap, removeMemorized } from "./memorized";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const PER_PAGE = 10;
 
@@ -53,7 +54,7 @@ export function getNoteDates(): string[] {
   return Array.from(set).sort((a, b) => b.localeCompare(a));
 }
 
-export function getNotes(
+function getNotesFromCsv(
   page: number = 1,
   level?: string,
   searchQuery?: string,
@@ -144,6 +145,52 @@ export function getNotes(
   };
 }
 
+export async function getNotes(
+  page: number = 1,
+  level?: string,
+  searchQuery?: string,
+  memorized?: string,
+  date?: string
+): Promise<NoteListResult> {
+  const safePage = Math.max(1, page);
+  const from = (safePage - 1) * PER_PAGE;
+  const to = from + PER_PAGE - 1;
+  const supabase = await createSupabaseServerClient();
+  let query = supabase
+    .from("vocabulary_notes")
+    .select(
+      "id,no,word,reading,meaning,level,memorized,memorized_at,reviewed_at,created_at",
+      { count: "exact" }
+    )
+    .order("created_at", { ascending: false })
+    .range(from, to);
+
+  const levelUpper = (level ?? "").toUpperCase();
+  if (levelUpper && levelUpper !== "ALL") query = query.eq("level", levelUpper);
+  if (memorized && memorized !== "all") query = query.eq("memorized", memorized === "yes");
+  if (date) {
+    query = query.gte("created_at", `${date}T00:00:00`).lt("created_at", `${date}T23:59:59.999`);
+  }
+  const q = (searchQuery ?? "").trim();
+  if (q) {
+    query = query.or(`word.ilike.%${q}%,reading.ilike.%${q}%,meaning.ilike.%${q}%`);
+  }
+
+  const { data, error, count } = await query;
+  if (error || !data || count === null) {
+    return getNotesFromCsv(page, level, searchQuery, memorized, date);
+  }
+
+  const total = count;
+  const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
+  return {
+    rows: data.map(mapVocabularyNoteRow),
+    total,
+    totalPages,
+    page: Math.max(1, Math.min(safePage, totalPages)),
+  };
+}
+
 export type NoteInsert = {
   word: string;
   reading?: string;
@@ -180,7 +227,7 @@ function saveNoteRecords(records: Array<Record<string, string>>): void {
 }
 
 /** 레벨별 단어장 전체 목록 (퀴즈용, 페이지네이션 없음) */
-export function getNotesByLevel(level?: string): NoteRow[] {
+function getNotesByLevelFromCsv(level?: string): NoteRow[] {
   const csvPath = getCsvPath();
   if (!fs.existsSync(csvPath)) return [];
 
@@ -218,8 +265,27 @@ export function getNotesByLevel(level?: string): NoteRow[] {
   });
 }
 
+export async function getNotesByLevel(level?: string): Promise<NoteRow[]> {
+  const supabase = await createSupabaseServerClient();
+  let query = supabase
+    .from("vocabulary_notes")
+    .select("id,no,word,reading,meaning,level,memorized,memorized_at,reviewed_at,created_at")
+    .order("created_at", { ascending: false });
+  const levelUpper = (level ?? "").toUpperCase();
+  if (levelUpper && levelUpper !== "ALL") query = query.eq("level", levelUpper);
+
+  const { data, error } = await query;
+  if (error || !data) return getNotesByLevelFromCsv(level);
+  return data.map(mapVocabularyNoteRow);
+}
+
 /** 단어장에 있는 word 목록 (중복 체크용) */
-export function getNoteWords(): Set<string> {
+export async function getNoteWords(): Promise<Set<string>> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.from("vocabulary_notes").select("word");
+  if (!error && data) {
+    return new Set(data.map((r) => String(r.word ?? "").trim()).filter(Boolean));
+  }
   const records = loadNoteRecords();
   const words = new Set<string>();
   for (const r of records) {
@@ -230,7 +296,7 @@ export function getNoteWords(): Set<string> {
 }
 
 /** no로 단어 한 건 조회 (상세용) */
-export function getNoteByNo(no: string): NoteRow | null {
+function getNoteByNoFromCsv(no: string): NoteRow | null {
   const records = loadNoteRecords();
   const noTrim = String(no ?? "").trim();
   const r = records.find((x) => String(x.no ?? "").trim() === noTrim);
@@ -251,7 +317,44 @@ export function getNoteByNo(no: string): NoteRow | null {
   };
 }
 
-export function appendNote(record: NoteInsert): void {
+export async function getNoteByNo(no: string): Promise<NoteRow | null> {
+  const noTrim = String(no ?? "").trim();
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("vocabulary_notes")
+    .select("id,no,word,reading,meaning,level,memorized,memorized_at,reviewed_at,created_at")
+    .eq("no", parseInt(noTrim, 10) || -1)
+    .maybeSingle();
+
+  if (error || !data) return getNoteByNoFromCsv(no);
+  return mapVocabularyNoteRow(data);
+}
+
+function mapVocabularyNoteRow(r: {
+  no: number | string | null;
+  word: string | null;
+  reading: string | null;
+  meaning: string | null;
+  level: string | null;
+  memorized: boolean | null;
+  memorized_at: string | null;
+  reviewed_at: string | null;
+  created_at: string | null;
+}): NoteRow {
+  return {
+    no: String(r.no ?? ""),
+    word: String(r.word ?? ""),
+    reading: String(r.reading ?? ""),
+    meaning: String(r.meaning ?? ""),
+    level: String(r.level ?? ""),
+    created_at: String(r.created_at ?? ""),
+    memorized: r.memorized ? "yes" : "no",
+    memorized_at: String(r.memorized_at ?? ""),
+    reviewed_at: String(r.reviewed_at ?? ""),
+  };
+}
+
+export function appendNote(record: NoteInsert): NoteRow {
   const word = (record.word ?? "").trim();
   if (!word) throw new Error("word is required");
 
@@ -275,6 +378,18 @@ export function appendNote(record: NoteInsert): void {
   };
   records.push(newRow);
   saveNoteRecords(records);
+
+  return {
+    no: newRow.no,
+    word: newRow.word,
+    reading: newRow.reading,
+    meaning: newRow.meaning,
+    level: newRow.level,
+    created_at: newRow.created_at,
+    memorized: "no",
+    memorized_at: "",
+    reviewed_at: "",
+  };
 }
 
 export function removeNote(word: string): void {

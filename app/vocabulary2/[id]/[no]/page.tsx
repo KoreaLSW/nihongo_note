@@ -2,7 +2,6 @@ import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getKanjiDetailByWord } from "@/lib/kanji";
-import { getMemorizedMap } from "@/lib/memorized";
 import {
   filterVocabulary2AllWordsFlat,
   getVocabulary2AllWordsFlatRows,
@@ -30,10 +29,10 @@ export default async function WordbookWordDetailPage({
 }: Props) {
   const { id, no } = await params;
   const sp = await searchParams;
-  const meta = getWordbookMeta(id);
+  const meta = await getWordbookMeta(id);
   if (!meta) notFound();
 
-  const row = getWordbookWordByNo(id, no);
+  const row = await getWordbookWordByNo(id, no);
   if (!row) notFound();
 
   const fromAllWords = (sp.from ?? "").toLowerCase() === "all-words";
@@ -42,7 +41,7 @@ export default async function WordbookWordDetailPage({
   /** 평탄 목록에서 위치를 찾았을 때만 이전/다음에 `from=all-words` 컨텍스트 유지 */
   let prevNextQuery = "";
 
-  const words = getWordbookWords(id);
+  const words = await getWordbookWords(id);
   const currentIndex = words.findIndex(
     (w) => String(w.no).trim() === String(row.no).trim()
   );
@@ -53,7 +52,7 @@ export default async function WordbookWordDetailPage({
 
   if (fromAllWords) {
     const filtered = filterVocabulary2AllWordsFlat(
-      getVocabulary2AllWordsFlatRows(),
+      await getVocabulary2AllWordsFlatRows(),
       allWordsMode
     );
     const flatIdx = filtered.findIndex(
@@ -103,8 +102,6 @@ export default async function WordbookWordDetailPage({
   }
 
   const kanjiDetail = getKanjiDetailByWord(row.word);
-  const memorizedMap = getMemorizedMap();
-  const memo = memorizedMap.get(row.word);
 
   const actionRow = {
     no: row.no,
@@ -113,9 +110,9 @@ export default async function WordbookWordDetailPage({
     meaning: row.meaning ?? "",
     level: row.level ?? "",
     created_at: row.created_at ?? "",
-    memorized: memo?.memorized ?? "no",
-    memorized_at: memo?.memorized_at ?? "",
-    reviewed_at: memo?.reviewed_at ?? "",
+    memorized: row.memorized ?? "no",
+    memorized_at: row.memorized_at ?? "",
+    reviewed_at: row.reviewed_at ?? "",
   };
 
   return (

@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getKanjiReadingsMap } from "@/lib/kanji";
-import { getMemorizedMap } from "@/lib/memorized";
 import { parseVocabulary2AllWordsMemorizedParam } from "@/lib/vocabulary2AllWordsNav";
 import {
   getWordbookList,
@@ -25,14 +24,12 @@ export default async function WordbookDetailPage({ params, searchParams }: Props
   const sp = await searchParams;
   const pageParam = sp.page ?? "1";
   const memorizedMode = parseVocabulary2AllWordsMemorizedParam(sp.memorized);
-  const meta = getWordbookMeta(id);
+  const meta = await getWordbookMeta(id);
   if (!meta) notFound();
 
-  const memorizedMap = getMemorizedMap();
-  const allWords = getWordbookWords(id);
+  const allWords = await getWordbookWords(id);
   const filtered = allWords.filter((row) => {
-    const memo = memorizedMap.get(row.word);
-    const m = memo?.memorized ?? "no";
+    const m = row.memorized ?? "no";
     if (memorizedMode === "yes") return m === "yes";
     if (memorizedMode === "no") return m !== "yes";
     return true;
@@ -68,7 +65,7 @@ export default async function WordbookDetailPage({ params, searchParams }: Props
       : `/vocabulary2/${wordbookId}`;
   };
 
-  const wordbooks = getWordbookList();
+  const wordbooks = await getWordbookList();
   const bookIndex = wordbooks.findIndex((w) => w.id === id);
   const prevBook = bookIndex > 0 ? wordbooks[bookIndex - 1] : undefined;
   const nextBook =
@@ -177,7 +174,6 @@ export default async function WordbookDetailPage({ params, searchParams }: Props
           </div>
         ) : (
           words.map((row) => {
-            const memo = memorizedMap.get(row.word);
             const readings = kanjiReadings.get(row.word);
             return (
               <WordbookCard
@@ -187,9 +183,9 @@ export default async function WordbookDetailPage({ params, searchParams }: Props
                 onyomi={readings?.onyomi}
                 kunyomi={readings?.kunyomi}
                 shapeExplanation={readings?.shape_explanation}
-                memorized={memo?.memorized}
-                memorized_at={memo?.memorized_at}
-                reviewed_at={memo?.reviewed_at}
+                memorized={row.memorized}
+                memorized_at={row.memorized_at}
+                reviewed_at={row.reviewed_at}
               />
             );
           })

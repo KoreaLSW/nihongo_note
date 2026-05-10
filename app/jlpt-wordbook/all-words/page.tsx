@@ -73,19 +73,19 @@ export default async function JlptWordbookAllWordsPage({ searchParams }: Props) 
   const page = Math.max(1, parseInt(sp?.page ?? "1", 10) || 1);
   const query = String(sp?.q ?? "").trim();
 
-  const { wordbookIds: resolvedWordbookIds } = resolveJlptLevelWordbookIdsForAllWords(
+  const { wordbookIds: resolvedWordbookIds } = await resolveJlptLevelWordbookIdsForAllWords(
     selectedLevel,
     {
       wb: sp?.wb,
       nowb: pickNowb(sp?.nowb),
     }
   );
-  const wordbookIdsForUrl = canonicalizeWordbookIdsForUrl(
+  const wordbookIdsForUrl = await canonicalizeWordbookIdsForUrl(
     selectedLevel,
     resolvedWordbookIds
   );
 
-  const flat = getJlptLevelAllWordsFlatRows(selectedLevel, {
+  const flat = await getJlptLevelAllWordsFlatRows(selectedLevel, {
     wordbookIds: resolvedWordbookIds,
   });
   const filteredByMemo = filterJlptLevelAllWordsFlat(flat, memorizedMode);
@@ -114,7 +114,18 @@ export default async function JlptWordbookAllWordsPage({ searchParams }: Props) 
     (_, i) => startPage + i
   );
 
-  const levelWordbookCount = getJlptWordbookList(selectedLevel).length;
+  const levelWordbookCount = (await getJlptWordbookList(selectedLevel)).length;
+  const levelWordbookIdsForUrl = new Map<string, string[] | undefined>();
+  for (const level of JLPT_LEVELS) {
+    const resolved = await resolveJlptLevelWordbookIdsForAllWords(level, {
+      wb: sp?.wb,
+      nowb: pickNowb(sp?.nowb),
+    });
+    levelWordbookIdsForUrl.set(
+      level,
+      await canonicalizeWordbookIdsForUrl(level, resolved.wordbookIds)
+    );
+  }
   const scopeNote =
     resolvedWordbookIds === undefined
       ? "이 레벨의 모든 단어장"
@@ -169,13 +180,7 @@ export default async function JlptWordbookAllWordsPage({ searchParams }: Props) 
                 memorized: memorizedMode,
                 page: 1,
                 q: query,
-                wordbookIds: canonicalizeWordbookIdsForUrl(
-                  level,
-                  resolveJlptLevelWordbookIdsForAllWords(level, {
-                    wb: sp?.wb,
-                    nowb: pickNowb(sp?.nowb),
-                  }).wordbookIds
-                ),
+                wordbookIds: levelWordbookIdsForUrl.get(level),
               })}
               className={`rounded-lg border px-4 py-2 text-sm font-semibold transition-colors ${
                 isActive

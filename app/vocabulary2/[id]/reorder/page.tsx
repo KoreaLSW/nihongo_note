@@ -7,10 +7,10 @@ type Props = { params: Promise<{ id: string }> };
 
 export default async function WordbookReorderPage({ params }: Props) {
   const { id } = await params;
-  const meta = getWordbookMeta(id);
+  const meta = await getWordbookMeta(id);
   if (!meta) notFound();
 
-  const words = getWordbookWords(id);
+  const words = await getWordbookWords(id);
 
   return (
     <div className="p-8">

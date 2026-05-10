@@ -1,49 +1,16 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import fs from "fs/promises";
-import path from "path";
 import { getGrammarWordbookList } from "@/lib/grammarWordbook";
+import {
+  getJlptGrammarItems,
+  JLPT_GRAMMAR_LEVELS as LEVELS,
+} from "@/lib/jlptGrammar";
 import { AddJlptGrammarToWordbookModal } from "../../components/AddJlptGrammarToWordbookModal";
-
-const LEVELS = ["n3", "n2", "n1"] as const;
+import { JlptGrammarMemorizedButton } from "../../components/JlptGrammarMemorizedButton";
 
 type Props = {
   params: Promise<{ level: string; no: string }>;
 };
-
-type GrammarDetailItem = {
-  no: number;
-  title?: string;
-  href?: string;
-  meaning?: string;
-  connection?: string;
-  description?: string;
-  related?: Array<{
-    title?: string;
-    href?: string;
-  }>;
-  video?: {
-    title?: string;
-    text?: string;
-    youtube?: string;
-  };
-  examples_items?: Array<{
-    text?: string;
-    audio?: Record<string, string>;
-  }>;
-};
-
-async function loadGrammarDetail(level: string): Promise<GrammarDetailItem[]> {
-  const filePath = path.join(
-    process.cwd(),
-    "public",
-    "grammar_json",
-    `${level}_detail.json`
-  );
-  const raw = await fs.readFile(filePath, "utf-8");
-  const parsed = JSON.parse(raw) as unknown;
-  return Array.isArray(parsed) ? (parsed as GrammarDetailItem[]) : [];
-}
 
 function normalizeAudioUrl(u: string): string {
   const s = String(u ?? "").trim();
@@ -70,10 +37,10 @@ export default async function JlptGrammarDetailPage({ params }: Props) {
   const no = Number(String(rawNo ?? "").trim());
   if (!Number.isFinite(no) || no <= 0) notFound();
 
-  const list = await loadGrammarDetail(level);
+  const list = await getJlptGrammarItems(level as (typeof LEVELS)[number]);
   const item = list.find((x) => Number(x?.no) === no) ?? null;
   if (!item) notFound();
-  const wordbooks = getGrammarWordbookList();
+  const wordbooks = await getGrammarWordbookList();
 
   return (
     <div className="p-8">
@@ -82,6 +49,17 @@ export default async function JlptGrammarDetailPage({ params }: Props) {
           <div>
             <div className="text-xs font-semibold tracking-wide text-sky-700 dark:text-sky-300">
               JLPT 문법 {level.toUpperCase()} · NO {item.no}
+            </div>
+            <div className="mt-2">
+              <span
+                className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
+                  item.memorized === "yes"
+                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200"
+                    : "bg-zinc-100 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300"
+                }`}
+              >
+                {item.memorized === "yes" ? "암기" : "미암기"}
+              </span>
             </div>
             <h1 className="mt-1 text-2xl font-semibold text-zinc-900 dark:text-zinc-100">
               {item.title ?? "(제목 없음)"}
@@ -107,6 +85,11 @@ export default async function JlptGrammarDetailPage({ params }: Props) {
           </div>
 
           <div className="flex gap-2">
+            <JlptGrammarMemorizedButton
+              level={level}
+              no={item.no}
+              memorized={item.memorized === "yes"}
+            />
             <Link
               href={`/jlpt-grammar/${level}`}
               className="rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-100 dark:hover:bg-zinc-800/50"
