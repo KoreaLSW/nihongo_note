@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { getMemorizedMap } from "@/lib/memorized";
 import { getNotesByLevel } from "@/lib/note";
 import type { NoteRow } from "@/lib/note";
 import {
@@ -62,8 +61,8 @@ export default async function QuizPage({
   const page = Math.max(1, parseInt(pageParam ?? "1", 10) || 1);
   const seed = seedParam ?? generateSeed();
 
-  const memorizedMap = getMemorizedMap();
   let allRows: NoteRow[];
+  let wordbookMeta: Awaited<ReturnType<typeof getWordbookMeta>> = null;
 
   const mapWordbookRow = (r: {
     no: string;
@@ -72,8 +71,10 @@ export default async function QuizPage({
     meaning?: string;
     level?: string;
     created_at?: string;
+    memorized?: string;
+    memorized_at?: string;
+    reviewed_at?: string;
   }): NoteRow => {
-    const memo = memorizedMap.get(r.word);
     return {
       no: r.no,
       word: r.word,
@@ -81,25 +82,29 @@ export default async function QuizPage({
       meaning: r.meaning ?? "",
       level: r.level ?? "",
       created_at: r.created_at ?? "",
-      memorized: memo?.memorized ?? "no",
-      memorized_at: memo?.memorized_at ?? "",
-      reviewed_at: memo?.reviewed_at ?? "",
+      memorized: r.memorized ?? "no",
+      memorized_at: r.memorized_at ?? "",
+      reviewed_at: r.reviewed_at ?? "",
     };
   };
 
   if (wordbookId) {
-    const meta = await getWordbookMeta(wordbookId);
-    const words = meta ? await getWordbookWords(wordbookId) : [];
-    allRows = words.map((r) => mapWordbookRow(r));
+    const [meta, words] = await Promise.all([
+      getWordbookMeta(wordbookId),
+      getWordbookWords(wordbookId),
+    ]);
+    wordbookMeta = meta;
+    allRows = meta ? words.map((r) => mapWordbookRow(r)) : [];
     const levelUpper = currentLevel === "all" ? "" : currentLevel.toUpperCase();
     if (levelUpper) {
       allRows = allRows.filter((r) => (r.level ?? "").toUpperCase() === levelUpper);
     }
   } else if (allVocabulary2) {
     const wbs = await getWordbookList();
+    const batches = await Promise.all(wbs.map((wb) => getWordbookWords(wb.id)));
     allRows = [];
-    for (const wb of wbs) {
-      for (const r of await getWordbookWords(wb.id)) {
+    for (let i = 0; i < wbs.length; i++) {
+      for (const r of batches[i]) {
         allRows.push(mapWordbookRow(r));
       }
     }
@@ -148,9 +153,6 @@ export default async function QuizPage({
     if (p > 1) params.set("page", String(p));
     return `/quiz?${params}`;
   };
-
-  const wordbookMeta = wordbookId ? await getWordbookMeta(wordbookId) : null;
-
 
   return (
     <div className="p-8">

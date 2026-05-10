@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { getKanjiReadingsMap } from '@/lib/kanji';
+import { getKanjiReadingsMapForWords } from '@/lib/kanji';
 import { getNotes } from '@/lib/note';
 import { VocabularyCard } from './components/VocabularyCard';
 import { VocabularyDateFilter } from './components/VocabularyDateFilter';
@@ -35,7 +35,9 @@ export default async function VocabularyPage({ searchParams }: Props) {
         memorized === 'all' ? undefined : memorized,
         date || undefined
     );
-    const kanjiReadings = getKanjiReadingsMap();
+    const kanjiReadings = await getKanjiReadingsMapForWords(
+        rows.map((r) => r.word),
+    );
 
     const PAGE_GROUP = 10;
     const startPage =
@@ -121,7 +123,7 @@ export default async function VocabularyPage({ searchParams }: Props) {
             <div className='grid grid-cols-5 grid-rows-2 gap-4'>
                 {rows.length === 0 ? (
                     <div className='col-span-5 row-span-2 flex items-center justify-center rounded-xl border-2 border-dashed border-zinc-300 py-16 text-zinc-500 dark:border-zinc-600 dark:text-zinc-400'>
-                        단어가 없습니다. note.csv에 데이터를 추가해 보세요.
+                        단어가 없습니다. 단어장에 데이터를 추가해 보세요.
                     </div>
                 ) : (
                     rows.map((row) => (

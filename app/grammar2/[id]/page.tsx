@@ -5,7 +5,6 @@ import {
   getGrammarWordbookWords,
   getGrammarWordbookList,
 } from "@/lib/grammarWordbook";
-import { getGrammarMemorizedMap } from "@/lib/grammarMemorized";
 import { AddGrammarForm } from "../components/AddGrammarForm";
 import { GrammarWordbookCard } from "../components/GrammarWordbookCard";
 import { RenameGrammarWordbookForm } from "../components/RenameGrammarWordbookForm";
@@ -34,8 +33,6 @@ export default async function GrammarWordbookDetailPage({
   const currentPage = Math.min(page, totalPages);
   const start = (currentPage - 1) * PER_PAGE;
   const words = allWords.slice(start, start + PER_PAGE);
-
-  const memorizedMap = getGrammarMemorizedMap();
 
   const startPage = Math.floor((currentPage - 1) / PAGE_GROUP) * PAGE_GROUP + 1;
   const endPage = Math.min(startPage + PAGE_GROUP - 1, totalPages);
@@ -90,18 +87,15 @@ export default async function GrammarWordbookDetailPage({
             아직 문법이 없습니다. 위 폼에서 문법을 추가해 보세요.
           </div>
         ) : (
-          words.map((row) => {
-            const memo = memorizedMap.get(row.grammar);
-            return (
-              <GrammarWordbookCard
-                key={row.no}
-                wordbookId={id}
-                row={row}
-                memorized={memo?.memorized}
-                memorized_at={memo?.memorized_at}
-              />
-            );
-          })
+          words.map((row) => (
+            <GrammarWordbookCard
+              key={row.no}
+              wordbookId={id}
+              row={row}
+              memorized={row.memorized}
+              memorized_at={row.memorized_at}
+            />
+          ))
         )}
       </div>
 

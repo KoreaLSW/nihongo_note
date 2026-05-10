@@ -7,7 +7,6 @@ import {
   getGrammarWordbookWordByNo,
   getGrammarWordbookWords,
 } from "@/lib/grammarWordbook";
-import { getGrammarMemorizedMap } from "@/lib/grammarMemorized";
 import { GrammarDetailActions } from "../../components/GrammarDetailActions";
 import { GrammarDetailDeleteButton } from "../../components/GrammarDetailDeleteButton";
 import { GrammarWordbookEditForm } from "../../components/GrammarWordbookEditForm";
@@ -34,9 +33,6 @@ export default async function GrammarWordbookWordDetailPage({
     currentIndex >= 0 && currentIndex + 1 < words.length
       ? words[currentIndex + 1]
       : undefined;
-
-  const memorizedMap = getGrammarMemorizedMap();
-  const memo = memorizedMap.get(row.grammar);
 
   // JLPT 문법에서 가져온 항목의 대표 오디오(있을 때만 표시)
   const audioIndexPath = path.join(
@@ -73,8 +69,8 @@ export default async function GrammarWordbookWordDetailPage({
     meaning: row.meaning ?? "",
     interpretation: row.interpretation ?? "",
     example: row.example ?? "",
-    memorized: memo?.memorized ?? "no",
-    memorized_at: memo?.memorized_at ?? "",
+    memorized: row.memorized ?? "no",
+    memorized_at: row.memorized_at ?? "",
     created_at: row.created_at ?? "",
   };
 

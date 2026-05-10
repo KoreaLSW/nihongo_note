@@ -63,8 +63,8 @@ SQL 파일은 `public/query` 폴더에 분리되어 있다.
 ### 2단계: Supabase 클라이언트 추가
 
 1. 패키지 설치 (완료)
-   - `@supabase/supabase-js`
-   - `@supabase/ssr`
+    - `@supabase/supabase-js`
+    - `@supabase/ssr`
 2. 서버용 클라이언트 생성 (완료)
 3. 브라우저용 클라이언트 생성 (완료)
 4. 미들웨어에서 세션 쿠키 갱신 (완료)
@@ -89,19 +89,19 @@ SQL 파일은 `public/query` 폴더에 분리되어 있다.
 읽기 기능은 메뉴 단위로 전환한다.
 
 1. 레벨별 한자 / 한자퀴즈
-   - `getKanjiByLevel`을 `kanji_items` 조회 우선으로 교체
-   - 사용자 암기 상태는 `user_kanji_progress`로 합성
+    - `getKanjiByLevel`을 `kanji_items` 조회 우선으로 교체
+    - 사용자 암기 상태는 `user_kanji_progress`로 합성
 2. JLPT 문법
-   - JLPT 문법 목록/상세/검색을 `jlpt_grammar_items` 조회 우선으로 교체
-   - 사용자 암기 상태는 `user_jlpt_grammar_progress`로 분리
+    - JLPT 문법 목록/상세/검색을 `jlpt_grammar_items` 조회 우선으로 교체
+    - 사용자 암기 상태는 `user_jlpt_grammar_progress`로 분리
 3. JLPT 단어장
-   - `getJlptWordbookList`, `getJlptWordbookMeta`, `getJlptWordbookWords`를 Supabase 조회 우선으로 교체
+    - `getJlptWordbookList`, `getJlptWordbookMeta`, `getJlptWordbookWords`를 Supabase 조회 우선으로 교체
 4. 일반 단어장
-   - `note.csv` 기반 조회를 `vocabulary_notes` 조회 우선으로 교체
+    - `note.csv` 기반 조회를 `vocabulary_notes` 조회 우선으로 교체
 5. 한자단어장
-   - `getWordbookList`와 단어 행 조회를 `vocabulary_wordbooks`, `vocabulary_words` 조회 우선으로 교체
+    - `getWordbookList`와 단어 행 조회를 `vocabulary_wordbooks`, `vocabulary_words` 조회 우선으로 교체
 6. 문법단어장
-   - `getGrammarWordbookList`와 문법 행 조회를 `grammar_wordbooks`, `grammar_wordbook_items` 조회 우선으로 교체
+    - `getGrammarWordbookList`와 문법 행 조회를 `grammar_wordbooks`, `grammar_wordbook_items` 조회 우선으로 교체
 
 ### 5단계: 쓰기 기능 전환
 
@@ -120,7 +120,7 @@ JLPT 단어장 쓰기 전환 보조 SQL:
 
 - `public/query/08_jlpt_write_support.sql`
 
-### 6단계: 기존 CSV 데이터 이관
+### 6단계: 기존 CSV 데이터 이관(완료)
 
 공통 변환 규칙:
 
@@ -148,15 +148,23 @@ JLPT 단어장 쓰기 전환 보조 SQL:
 4. 빌드 확인
 5. 로그인, 전체 메뉴 조회, 단어장 CRUD, CSV 업로드, 암기/복습/퀴즈 흐름 테스트
 
-### 8단계: CSV 의존성 제거
+### 8단계: CSV 의존성 제거(완료)
 
 모든 읽기/쓰기 기능이 Supabase로 전환된 뒤에만 CSV 의존성을 제거한다.
 
-1. `lib/*`의 `fs`, `csv-parse`, `csv-stringify` 사용 위치 확인
-2. Supabase 전환이 끝난 함수에서 CSV fallback 제거
-3. `public`에 남은 사용자 데이터 CSV를 더 이상 쓰지 않도록 서버 액션 정리
-4. 원본 학습 데이터 파일은 백업 또는 seed 파일로만 보관
+1. `lib/*`의 `fs`, `csv-parse`, `csv-stringify` 사용 위치 확인(완료)
+2. Supabase 전환이 끝난 함수에서 CSV fallback 제거(완료)
+3. `public`에 남은 사용자 데이터 CSV를 더 이상 쓰지 않도록 서버 액션 정리(완료)
+4. 원본 학습 데이터 파일은 백업 또는 seed 파일로만 보관(완료)
 5. 배포 후 Vercel에서 새로 생성/수정한 데이터가 DB에만 저장되는지 확인
+
+정리 결과:
+
+- 일반 단어장, 한자단어장, 문법단어장, JLPT 단어장 읽기 경로에서 `public` CSV/manifest fallback을 제거
+- `memorized.csv`, `grammar_memorized.csv` 기반 암기 상태 조회/쓰기 제거
+- 한자 상세/카드 보조 정보는 `kanji_items` 조회로 전환
+- JLPT 문법 상세 오디오/동영상/관련 링크 보강에 필요한 `grammar_json` 정적 JSON 의존성은 유지
+- CSV 업로드 파싱과 마이그레이션 스크립트의 CSV 파서는 운영 데이터 저장 fallback이 아니므로 유지
 
 ## 마이그레이션 검증 체크리스트
 

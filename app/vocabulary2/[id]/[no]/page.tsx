@@ -12,8 +12,8 @@ import {
 } from "@/lib/vocabulary2AllWordsNav";
 import {
   getWordbookMeta,
-  getWordbookWords,
   getWordbookWordByNo,
+  getWordbookPrevNextNos,
 } from "@/lib/wordbook";
 import { VocabularyDetailActions } from "@/app/vocabulary/components/VocabularyDetailActions";
 import { WordbookDetailDeleteButton } from "@/app/vocabulary2/components/WordbookDetailDeleteButton";
@@ -32,7 +32,10 @@ export default async function WordbookWordDetailPage({
   const meta = await getWordbookMeta(id);
   if (!meta) notFound();
 
-  const row = await getWordbookWordByNo(id, no);
+  const [row, wbNeighbors] = await Promise.all([
+    getWordbookWordByNo(id, no),
+    getWordbookPrevNextNos(id, String(no ?? "").trim()),
+  ]);
   if (!row) notFound();
 
   const fromAllWords = (sp.from ?? "").toLowerCase() === "all-words";
@@ -41,14 +44,21 @@ export default async function WordbookWordDetailPage({
   /** 평탄 목록에서 위치를 찾았을 때만 이전/다음에 `from=all-words` 컨텍스트 유지 */
   let prevNextQuery = "";
 
-  const words = await getWordbookWords(id);
-  const currentIndex = words.findIndex(
-    (w) => String(w.no).trim() === String(row.no).trim()
-  );
   let prevNo: string | undefined;
   let prevWordbookId: string | undefined;
   let nextNo: string | undefined;
   let nextWordbookId: string | undefined;
+
+  const applyWithinWordbook = () => {
+    if (wbNeighbors.prevNo) {
+      prevWordbookId = id;
+      prevNo = wbNeighbors.prevNo;
+    }
+    if (wbNeighbors.nextNo) {
+      nextWordbookId = id;
+      nextNo = wbNeighbors.nextNo;
+    }
+  };
 
   if (fromAllWords) {
     const filtered = filterVocabulary2AllWordsFlat(
@@ -73,35 +83,13 @@ export default async function WordbookWordDetailPage({
         nextNo = n.no;
       }
     } else {
-      const prevRow =
-        currentIndex > 0 ? words[currentIndex - 1] : undefined;
-      const nextRow =
-        currentIndex >= 0 ? words[currentIndex + 1] : undefined;
-      if (prevRow) {
-        prevWordbookId = id;
-        prevNo = prevRow.no;
-      }
-      if (nextRow) {
-        nextWordbookId = id;
-        nextNo = nextRow.no;
-      }
+      applyWithinWordbook();
     }
   } else {
-    const prevRow =
-      currentIndex > 0 ? words[currentIndex - 1] : undefined;
-    const nextRow =
-      currentIndex >= 0 ? words[currentIndex + 1] : undefined;
-    if (prevRow) {
-      prevWordbookId = id;
-      prevNo = prevRow.no;
-    }
-    if (nextRow) {
-      nextWordbookId = id;
-      nextNo = nextRow.no;
-    }
+    applyWithinWordbook();
   }
 
-  const kanjiDetail = getKanjiDetailByWord(row.word);
+  const kanjiDetail = await getKanjiDetailByWord(row.word);
 
   const actionRow = {
     no: row.no,

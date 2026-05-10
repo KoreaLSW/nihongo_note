@@ -18,10 +18,10 @@ export type Vocabulary2AllWordsFlatRow = {
 /** 단어장 manifest 순서 → 각 CSV 행 순서로 이어 붙인 전체 목록 */
 export async function getVocabulary2AllWordsFlatRows(): Promise<Vocabulary2AllWordsFlatRow[]> {
   const wordbooks = await getWordbookList();
-  const flat: Vocabulary2AllWordsFlatRow[] = [];
-  for (const wb of wordbooks) {
-    for (const r of await getWordbookWords(wb.id)) {
-      flat.push({
+  const perBook = await Promise.all(
+    wordbooks.map(async (wb) => {
+      const rows = await getWordbookWords(wb.id);
+      return rows.map((r) => ({
         wordbookId: wb.id,
         wordbookName: wb.name,
         no: r.no,
@@ -33,10 +33,10 @@ export async function getVocabulary2AllWordsFlatRows(): Promise<Vocabulary2AllWo
         memorized: r.memorized ?? "no",
         memorized_at: r.memorized_at ?? "",
         reviewed_at: r.reviewed_at ?? "",
-      });
-    }
-  }
-  return flat;
+      }));
+    })
+  );
+  return perBook.flat();
 }
 
 export function filterVocabulary2AllWordsFlat(

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getGrammarWordbookList } from "@/lib/grammarWordbook";
 import {
-  getJlptGrammarItems,
+  getJlptGrammarItem,
   JLPT_GRAMMAR_LEVELS as LEVELS,
 } from "@/lib/jlptGrammar";
 import { AddJlptGrammarToWordbookModal } from "../../components/AddJlptGrammarToWordbookModal";
@@ -37,10 +37,11 @@ export default async function JlptGrammarDetailPage({ params }: Props) {
   const no = Number(String(rawNo ?? "").trim());
   if (!Number.isFinite(no) || no <= 0) notFound();
 
-  const list = await getJlptGrammarItems(level as (typeof LEVELS)[number]);
-  const item = list.find((x) => Number(x?.no) === no) ?? null;
+  const [item, wordbooks] = await Promise.all([
+    getJlptGrammarItem(level as (typeof LEVELS)[number], no),
+    getGrammarWordbookList(),
+  ]);
   if (!item) notFound();
-  const wordbooks = await getGrammarWordbookList();
 
   return (
     <div className="p-8">

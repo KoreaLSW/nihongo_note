@@ -12,6 +12,7 @@ Supabase SQL Editor에서 아래 파일을 먼저 실행합니다.
 4. `public/query/06_additional_app_tables.sql`
 5. `public/query/07_grants_for_supabase_api.sql`
 6. `public/query/08_jlpt_write_support.sql`
+7. `public/query/09_kanji_items_extended_columns.sql` *(이미 `06`만 실행한 기존 프로젝트: `kanji_items`에 한자 상세 컬럼이 없으면 단어장 등에서 42703 오류 가능 — 이 파일로 컬럼 추가)*
 
 `.env` 또는 `.env.local`에 아래 값을 추가합니다.
 

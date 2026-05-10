@@ -4,7 +4,7 @@ import { JlptWordbookHomeSelection } from "./components/JlptWordbookHomeSelectio
 import { JlptWordbooksReorderPanel } from "./components/JlptWordbooksReorderPanel";
 import {
   getJlptWordbookList,
-  getJlptWordbookWordsCount,
+  getJlptWordbookWordsCountsByWordbookIds,
   JLPT_LEVELS,
   normalizeJlptLevel,
 } from "@/lib/jlptWordbook";
@@ -17,10 +17,9 @@ export default async function JlptWordbookPage({ searchParams }: Props) {
   const params = searchParams ? await searchParams : undefined;
   const selectedLevel = normalizeJlptLevel(params?.level || "n5");
   const selectedWordbooks = await getJlptWordbookList(selectedLevel);
-  const wordbookCounts = new Map<string, number>();
-  for (const wb of selectedWordbooks) {
-    wordbookCounts.set(wb.id, await getJlptWordbookWordsCount(wb.id));
-  }
+  const wordbookCounts = await getJlptWordbookWordsCountsByWordbookIds(
+    selectedWordbooks.map((wb) => wb.id)
+  );
 
   return (
     <div className="p-8">

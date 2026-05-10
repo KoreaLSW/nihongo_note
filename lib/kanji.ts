@@ -1,6 +1,5 @@
 import fs from "fs";
 import path from "path";
-import { parse } from "csv-parse/sync";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const PER_PAGE = 10;
@@ -20,74 +19,6 @@ export type KanjiListResult = {
   page: number;
 };
 
-function getCsvPath(): string {
-  return path.join(process.cwd(), "public", "kanji.csv");
-}
-
-/** N1~N5는 public/N1.csv ~ N5.csv, 그 외(ALL 등)는 kanji.csv */
-function getCsvPathForLevel(level: string): string {
-  const levelUpper = level.toUpperCase();
-  if (["N1", "N2", "N3", "N4", "N5"].includes(levelUpper)) {
-    return path.join(process.cwd(), "public", `${levelUpper}.csv`);
-  }
-  return getCsvPath();
-}
-
-function getKanjiByLevelFromCsv(
-  level: string,
-  page: number = 1,
-  searchQuery?: string
-): KanjiListResult {
-  const levelUpper = level.toUpperCase();
-  const csvPath = getCsvPathForLevel(level);
-
-  if (!fs.existsSync(csvPath)) {
-    return { rows: [], total: 0, totalPages: 1, page: 1 };
-  }
-
-  let raw = fs.readFileSync(csvPath, "utf-8");
-  if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);
-  const records = parse(raw, {
-    columns: true,
-    skip_empty_lines: true,
-    relax_column_count: true,
-  }) as Array<Record<string, string>>;
-
-  let filtered =
-    levelUpper === "ALL"
-      ? records
-      : records; /* N1~N5 CSV는 해당 레벨만 있음, no 이미 1부터 */
-
-  const q = (searchQuery ?? "").trim();
-  if (q) {
-    const qLower = q.toLowerCase();
-    filtered = filtered.filter((r) =>
-      (r.meaning_quoted ?? "").toLowerCase().includes(qLower)
-    );
-  }
-
-  const total = filtered.length;
-  const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
-  const safePage = Math.max(1, Math.min(page, totalPages));
-  const start = (safePage - 1) * PER_PAGE;
-  const slice = filtered.slice(start, start + PER_PAGE);
-
-  const rows: KanjiRow[] = slice.map((r) => ({
-    no: r.no ?? "",
-    kanji: r.kanji ?? "",
-    meaning_quoted: r.meaning_quoted ?? "",
-    memorized: r.memorized ?? "no",
-    level: r.level ?? levelUpper,
-  }));
-
-  return {
-    rows,
-    total,
-    totalPages,
-    page: safePage,
-  };
-}
-
 export async function getKanjiByLevel(
   level: string,
   page: number = 1,
@@ -102,7 +33,7 @@ export async function getKanjiByLevel(
   const supabase = await createSupabaseServerClient();
   let query = supabase
     .from("kanji_items")
-    .select("id,no,kanji,meaning_quoted,level,user_kanji_progress(memorized)", {
+    .select("id,no,kanji,meaning_quoted,level", {
       count: "exact",
     })
     .order("level", { ascending: false })
@@ -114,8 +45,24 @@ export async function getKanjiByLevel(
   if (q) query = query.ilike("meaning_quoted", `%${q}%`);
 
   const { data, error, count } = await query;
-  if (error || !data || count === null) {
-    return getKanjiByLevelFromCsv(level, page, searchQuery);
+  if (error || !data || count === null) throw error ?? new Error("kanji_items query failed");
+
+  const kanjiIds = data
+    .map((r) => Number(r.id))
+    .filter((id) => Number.isFinite(id));
+  const memorizedByKanjiId = new Map<number, boolean>();
+  if (kanjiIds.length > 0) {
+    const { data: progRows, error: progErr } = await supabase
+      .from("user_kanji_progress")
+      .select("kanji_id,memorized")
+      .in("kanji_id", kanjiIds);
+
+    if (progErr) throw progErr;
+    for (const p of progRows ?? []) {
+      const kid = Number(p.kanji_id);
+      if (Number.isFinite(kid))
+        memorizedByKanjiId.set(kid, !!p.memorized);
+    }
   }
 
   const total = count;
@@ -124,14 +71,16 @@ export async function getKanjiByLevel(
 
   return {
     rows: data.map((r) => {
-      const progress = Array.isArray(r.user_kanji_progress)
-        ? r.user_kanji_progress[0]
-        : undefined;
+      const id = Number(r.id);
+      const memorized =
+        Number.isFinite(id) && memorizedByKanjiId.get(id)
+          ? "yes"
+          : "no";
       return {
         no: String(r.no ?? ""),
         kanji: String(r.kanji ?? ""),
         meaning_quoted: String(r.meaning_quoted ?? ""),
-        memorized: progress?.memorized ? "yes" : "no",
+        memorized,
         level: String(r.level ?? "").toUpperCase(),
       };
     }),
@@ -183,105 +132,126 @@ function findImageForNo(no: string): string | null {
   return null;
 }
 
-/** level이 N1~N5면 해당 레벨 CSV에서 no로 조회(no는 1부터). 없거나 ALL이면 kanji.csv에서 전역 no로 조회 */
-export function getKanjiDetail(no: string, level?: string): KanjiDetail | null {
-  const csvPath = level ? getCsvPathForLevel(level) : getCsvPath();
-  if (!fs.existsSync(csvPath)) return null;
+type KanjiDbRow = {
+  no: number | string | null;
+  level: string | null;
+  kanji: string | null;
+  meaning_quoted: string | null;
+  meaning: string | null;
+  onyomi: string | null;
+  kunyomi: string | null;
+  shape_explanation: string | null;
+  onyomi_detail: string | null;
+  kunyomi_detail: string | null;
+  user_kanji_progress?: Array<{ memorized: boolean | null }> | null;
+};
 
-  let raw = fs.readFileSync(csvPath, "utf-8");
-  if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);
-  const records = parse(raw, {
-    columns: true,
-    skip_empty_lines: true,
-    relax_column_count: true,
-  }) as Array<Record<string, string>>;
-
-  const allNos = new Set(
-    records.map((r) => String(r.no ?? "").trim()).filter(Boolean)
-  );
-  const noTrim = String(no).trim();
-  const noNum = Number(noTrim);
-  const prevNo =
-    allNos.has(String(noNum - 1)) ? String(noNum - 1) : null;
-  const nextNo =
-    allNos.has(String(noNum + 1)) ? String(noNum + 1) : null;
-
-  const row = records.find((r) => String(r.no).trim() === noTrim);
-  if (!row) return null;
-
-  const imageUrl = findImageForNo(String(row.no ?? "").trim());
-
+function mapKanjiDetail(row: KanjiDbRow, prevNo: string | null, nextNo: string | null): KanjiDetail {
+  const no = String(row.no ?? "");
+  const progress = Array.isArray(row.user_kanji_progress)
+    ? row.user_kanji_progress[0]
+    : undefined;
   return {
-    no: row.no ?? "",
-    level: row.level ?? "",
-    kanji: row.kanji ?? "",
-    meaning_quoted: row.meaning_quoted ?? "",
-    meaning: row.meaning ?? "",
-    onyomi: row.onyomi ?? "",
-    kunyomi: row.kunyomi ?? "",
-    shape_explanation: row.shape_explanation ?? "",
-    onyomi_detail: row.onyomi_detail ?? "",
-    kunyomi_detail: row.kunyomi_detail ?? "",
-    memorized: row.memorized ?? "no",
-    imageUrl,
+    no,
+    level: String(row.level ?? "").toUpperCase(),
+    kanji: String(row.kanji ?? ""),
+    meaning_quoted: String(row.meaning_quoted ?? ""),
+    meaning: String(row.meaning ?? ""),
+    onyomi: String(row.onyomi ?? ""),
+    kunyomi: String(row.kunyomi ?? ""),
+    shape_explanation: String(row.shape_explanation ?? ""),
+    onyomi_detail: String(row.onyomi_detail ?? ""),
+    kunyomi_detail: String(row.kunyomi_detail ?? ""),
+    memorized: progress?.memorized ? "yes" : "no",
+    imageUrl: findImageForNo(no),
     prevNo,
     nextNo,
   };
 }
 
-/** word(한자)로 kanji.csv에서 상세 조회 (단어장 상세에서 사용) */
-export function getKanjiDetailByWord(word: string): KanjiDetail | null {
-  const csvPath = getCsvPath();
-  let raw = fs.readFileSync(csvPath, "utf-8");
-  if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);
-  const records = parse(raw, {
-    columns: true,
-    skip_empty_lines: true,
-    relax_column_count: true,
-  }) as Array<Record<string, string>>;
-  const w = (word ?? "").trim();
-  const row = records.find((r) => (r.kanji ?? "").trim() === w);
-  if (!row || !row.no) return null;
-  return getKanjiDetail(String(row.no).trim());
+export async function getKanjiDetail(no: string, level?: string): Promise<KanjiDetail | null> {
+  const noNum = Number(String(no ?? "").trim());
+  if (!Number.isFinite(noNum) || noNum <= 0) return null;
+
+  const supabase = await createSupabaseServerClient();
+  let query = supabase
+    .from("kanji_items")
+    .select(
+      "no,level,kanji,meaning_quoted,meaning,onyomi,kunyomi,shape_explanation,onyomi_detail,kunyomi_detail,user_kanji_progress(memorized)"
+    )
+    .eq("no", noNum);
+
+  const levelLower = String(level ?? "").toLowerCase();
+  if (levelLower && levelLower !== "all") query = query.eq("level", levelLower);
+
+  const { data, error } = await query.maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+
+  const { data: prev } = await supabase
+    .from("kanji_items")
+    .select("no")
+    .eq("level", data.level)
+    .eq("no", noNum - 1)
+    .maybeSingle();
+  const { data: next } = await supabase
+    .from("kanji_items")
+    .select("no")
+    .eq("level", data.level)
+    .eq("no", noNum + 1)
+    .maybeSingle();
+
+  return mapKanjiDetail(
+    data as KanjiDbRow,
+    prev?.no ? String(prev.no) : null,
+    next?.no ? String(next.no) : null
+  );
+}
+
+export async function getKanjiDetailByWord(word: string): Promise<KanjiDetail | null> {
+  const w = String(word ?? "").trim();
+  if (!w) return null;
+
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("kanji_items")
+    .select(
+      "no,level,kanji,meaning_quoted,meaning,onyomi,kunyomi,shape_explanation,onyomi_detail,kunyomi_detail,user_kanji_progress(memorized)"
+    )
+    .eq("kanji", w)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) return null;
+  return mapKanjiDetail(data as KanjiDbRow, null, null);
 }
 
 export type JlptKanjiCardInfo = {
   level: string;
   meaningQuoted: string;
-  /** 해당 레벨 CSV(`N1.csv` 등) 행의 `no` — 한자 상세 URL에 사용 */
   listNo: string;
 };
 
-let jlptKanjiCardInfoCache: Map<string, JlptKanjiCardInfo> | null = null;
+export async function getJlptKanjiCardInfoMap(): Promise<Map<string, JlptKanjiCardInfo>> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("kanji_items")
+    .select("level,no,kanji,meaning_quoted")
+    .order("level", { ascending: false })
+    .order("no", { ascending: true });
 
-/**
- * 단어 카드용: 한 글자 한자 → JLPT 레벨 + meaning_quoted + 레벨 파일 내 번호.
- * `public/N5.csv`→…→`N1.csv` 순으로 읽으며, 동일 글자는 먼저 나온 레벨만 유지.
- */
-export function getJlptKanjiCardInfoMap(): Map<string, JlptKanjiCardInfo> {
-  if (jlptKanjiCardInfoCache) return jlptKanjiCardInfoCache;
+  if (error || !data) throw error ?? new Error("kanji_items query failed");
+
   const map = new Map<string, JlptKanjiCardInfo>();
-  const cwd = process.cwd();
-  for (const lv of ["N5", "N4", "N3", "N2", "N1"] as const) {
-    const csvPath = path.join(cwd, "public", `${lv}.csv`);
-    if (!fs.existsSync(csvPath)) continue;
-    let raw = fs.readFileSync(csvPath, "utf-8");
-    if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);
-    const records = parse(raw, {
-      columns: true,
-      skip_empty_lines: true,
-      relax_column_count: true,
-    }) as Array<Record<string, string>>;
-    for (const r of records) {
-      const k = (r.kanji ?? "").trim();
-      if (!k || k.length !== 1) continue;
-      if (map.has(k)) continue;
-      const listNo = String(r.no ?? "").trim();
-      const mq = (r.meaning_quoted ?? "").trim();
-      map.set(k, { level: lv, meaningQuoted: mq, listNo });
-    }
+  for (const r of data) {
+    const k = String(r.kanji ?? "").trim();
+    if (!k || k.length !== 1 || map.has(k)) continue;
+    map.set(k, {
+      level: String(r.level ?? "").toUpperCase(),
+      meaningQuoted: String(r.meaning_quoted ?? "").trim(),
+      listNo: String(r.no ?? "").trim(),
+    });
   }
-  jlptKanjiCardInfoCache = map;
   return map;
 }
 
@@ -292,13 +262,14 @@ export type JlptWordKanjiLine = {
   found: boolean;
   meaningShort: string;
   level: string | null;
-  /** 표에 있고 `listNo`가 있을 때만 — `/level/n4/kanji/3` 형식 */
   detailHref: string | null;
 };
 
-/** 단어에 등장하는 한자(순서 유지·중복 제거)별 JLPT 표시 줄. */
-export function getJlptKanjiLinesForWord(word: string): JlptWordKanjiLine[] {
-  const map = getJlptKanjiCardInfoMap();
+/** 이미 로드한 `JlptKanjiCardInfo` 맵으로 한 줄 처리(페이지 단위로 맵 한 번만 조회할 때 사용) */
+export function getJlptKanjiLinesForWordFromMap(
+  word: string,
+  map: Map<string, JlptKanjiCardInfo>
+): JlptWordKanjiLine[] {
   const seen = new Set<string>();
   const out: JlptWordKanjiLine[] = [];
   for (const ch of word) {
@@ -331,31 +302,73 @@ export function getJlptKanjiLinesForWord(word: string): JlptWordKanjiLine[] {
   return out;
 }
 
-/** kanji → { onyomi, kunyomi, shape_explanation } 맵 (단어장 카드 표시용) */
-export function getKanjiReadingsMap(): Map<
-  string,
-  { onyomi: string; kunyomi: string; shape_explanation: string }
-> {
-  const csvPath = getCsvPath();
-  if (!fs.existsSync(csvPath)) return new Map();
-  let raw = fs.readFileSync(csvPath, "utf-8");
-  if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);
-  const records = parse(raw, {
-    columns: true,
-    skip_empty_lines: true,
-    relax_column_count: true,
-  }) as Array<Record<string, string>>;
-  const map = new Map<
-    string,
-    { onyomi: string; kunyomi: string; shape_explanation: string }
-  >();
-  for (const r of records) {
-    const k = (r.kanji ?? "").trim();
+export async function getJlptKanjiLinesForWord(word: string): Promise<JlptWordKanjiLine[]> {
+  const map = await getJlptKanjiCardInfoMap();
+  return getJlptKanjiLinesForWordFromMap(word, map);
+}
+
+export type KanjiReadingsBundle = {
+  onyomi: string;
+  kunyomi: string;
+  shape_explanation: string;
+};
+
+const KANJI_READINGS_IN_CHUNK = 200;
+
+/** 카드 목록 등에 필요한 `kanji` 문자열만 배치 조회(URL·열 길이 제한 회피로 청크) */
+export async function getKanjiReadingsMapForWords(
+  words: Iterable<string>
+): Promise<Map<string, KanjiReadingsBundle>> {
+  const uniq = Array.from(
+    new Set(
+      Array.from(words, (w) => String(w ?? "").trim()).filter(Boolean)
+    )
+  );
+  if (uniq.length === 0) return new Map();
+
+  const supabase = await createSupabaseServerClient();
+  const map = new Map<string, KanjiReadingsBundle>();
+
+  for (let i = 0; i < uniq.length; i += KANJI_READINGS_IN_CHUNK) {
+    const chunk = uniq.slice(i, i + KANJI_READINGS_IN_CHUNK);
+    const { data, error } = await supabase
+      .from("kanji_items")
+      .select("kanji,onyomi,kunyomi,shape_explanation")
+      .in("kanji", chunk);
+
+    if (error || !data) throw error ?? new Error("kanji_items query failed");
+
+    for (const r of data) {
+      const k = String(r.kanji ?? "").trim();
+      if (!k) continue;
+      map.set(k, {
+        onyomi: String(r.onyomi ?? ""),
+        kunyomi: String(r.kunyomi ?? ""),
+        shape_explanation: String(r.shape_explanation ?? ""),
+      });
+    }
+  }
+
+  return map;
+}
+
+/** 전 테이블 음훈·형태설명 로드 — 목록 카드에서는 `getKanjiReadingsMapForWords` 권장 */
+export async function getKanjiReadingsMap(): Promise<Map<string, KanjiReadingsBundle>> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("kanji_items")
+    .select("kanji,onyomi,kunyomi,shape_explanation");
+
+  if (error || !data) throw error ?? new Error("kanji_items query failed");
+
+  const map = new Map<string, KanjiReadingsBundle>();
+  for (const r of data) {
+    const k = String(r.kanji ?? "").trim();
     if (!k) continue;
     map.set(k, {
-      onyomi: r.onyomi ?? "",
-      kunyomi: r.kunyomi ?? "",
-      shape_explanation: r.shape_explanation ?? "",
+      onyomi: String(r.onyomi ?? ""),
+      kunyomi: String(r.kunyomi ?? ""),
+      shape_explanation: String(r.shape_explanation ?? ""),
     });
   }
   return map;

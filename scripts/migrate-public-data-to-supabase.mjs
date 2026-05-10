@@ -68,6 +68,12 @@ async function migrateKanjiItems() {
         no: toInt(row.no),
         kanji,
         meaning_quoted: str(row.meaning_quoted),
+        meaning: str(row.meaning),
+        onyomi: str(row.onyomi),
+        kunyomi: str(row.kunyomi),
+        shape_explanation: str(row.shape_explanation),
+        onyomi_detail: str(row.onyomi_detail),
+        kunyomi_detail: str(row.kunyomi_detail),
         level,
         image_path: null,
       });

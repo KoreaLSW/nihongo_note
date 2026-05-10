@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getKanjiReadingsMap } from "@/lib/kanji";
+import { getKanjiReadingsMapForWords } from "@/lib/kanji";
 import {
   filterVocabulary2AllWordsFlat,
   getVocabulary2AllWordsFlatRows,
@@ -20,7 +20,6 @@ export default async function AllVocabulary2WordsPage({ searchParams }: Props) {
   const pageParam = sp.page ?? "1";
   const page = Math.max(1, parseInt(pageParam, 10) || 1);
 
-  const kanjiReadings = getKanjiReadingsMap();
   const flat = await getVocabulary2AllWordsFlatRows();
   const filtered = filterVocabulary2AllWordsFlat(flat, memorizedModeParam);
 
@@ -29,6 +28,10 @@ export default async function AllVocabulary2WordsPage({ searchParams }: Props) {
   const currentPage = Math.min(page, totalPages);
   const start = (currentPage - 1) * PER_PAGE;
   const rows = filtered.slice(start, start + PER_PAGE);
+
+  const kanjiReadings = await getKanjiReadingsMapForWords(
+    rows.map((r) => r.word)
+  );
 
   const startPage =
     Math.floor((currentPage - 1) / PAGE_GROUP) * PAGE_GROUP + 1;

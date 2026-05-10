@@ -1,11 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getKanjiReadingsMap } from "@/lib/kanji";
+import { getKanjiReadingsMapForWords } from "@/lib/kanji";
 import { parseVocabulary2AllWordsMemorizedParam } from "@/lib/vocabulary2AllWordsNav";
 import {
   getWordbookList,
   getWordbookMeta,
-  getWordbookWords,
+  getWordbookWordsListPage,
 } from "@/lib/wordbook";
 import { AddWordForm } from "../components/AddWordForm";
 import { WordbookCard } from "../components/WordbookCard";
@@ -27,22 +27,29 @@ export default async function WordbookDetailPage({ params, searchParams }: Props
   const meta = await getWordbookMeta(id);
   if (!meta) notFound();
 
-  const allWords = await getWordbookWords(id);
-  const filtered = allWords.filter((row) => {
-    const m = row.memorized ?? "no";
-    if (memorizedMode === "yes") return m === "yes";
-    if (memorizedMode === "no") return m !== "yes";
-    return true;
-  });
-
-  const total = filtered.length;
-  const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
   const page = Math.max(1, parseInt(pageParam, 10) || 1);
-  const currentPage = Math.min(page, totalPages);
-  const start = (currentPage - 1) * PER_PAGE;
-  const words = filtered.slice(start, start + PER_PAGE);
 
-  const kanjiReadings = getKanjiReadingsMap();
+  const [listResult, wordbooks] = await Promise.all([
+    getWordbookWordsListPage({
+      wordbookId: id,
+      page,
+      perPage: PER_PAGE,
+      memorizedMode,
+    }),
+    getWordbookList(),
+  ]);
+
+  const {
+    words,
+    filteredTotal: total,
+    wordbookTotal: allWordsLen,
+    page: currentPage,
+  } = listResult;
+  const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
+
+  const kanjiReadings = await getKanjiReadingsMapForWords(
+    words.map((r) => r.word)
+  );
 
   const startPage = Math.floor((currentPage - 1) / PAGE_GROUP) * PAGE_GROUP + 1;
   const endPage = Math.min(startPage + PAGE_GROUP - 1, totalPages);
@@ -65,7 +72,6 @@ export default async function WordbookDetailPage({ params, searchParams }: Props
       : `/vocabulary2/${wordbookId}`;
   };
 
-  const wordbooks = await getWordbookList();
   const bookIndex = wordbooks.findIndex((w) => w.id === id);
   const prevBook = bookIndex > 0 ? wordbooks[bookIndex - 1] : undefined;
   const nextBook =
@@ -132,8 +138,8 @@ export default async function WordbookDetailPage({ params, searchParams }: Props
       </div>
 
       <p className="mb-2 text-sm text-zinc-500 dark:text-zinc-400">
-        단어장에 {allWords.length}개
-        {allWords.length > 0 && (
+        단어장에 {allWordsLen}개
+        {allWordsLen > 0 && (
           <>
             {" · "}
             <Link
@@ -164,7 +170,7 @@ export default async function WordbookDetailPage({ params, searchParams }: Props
       </div>
 
       <div className="grid grid-cols-5 grid-rows-2 gap-4">
-        {allWords.length === 0 ? (
+        {allWordsLen === 0 ? (
           <div className="col-span-5 row-span-2 flex items-center justify-center rounded-xl border-2 border-dashed border-zinc-300 py-16 text-zinc-500 dark:border-zinc-600 dark:text-zinc-400">
             아직 단어가 없습니다. 위 폼에서 단어를 추가해 보세요.
           </div>

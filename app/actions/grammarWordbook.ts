@@ -1,6 +1,5 @@
 "use server";
 
-import { setGrammarMemorized } from "@/lib/grammarMemorized";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 function getNowIso(): string {
@@ -308,7 +307,34 @@ export async function setGrammarMemorizedAction(formData: FormData) {
   if (!grammar.trim()) return { ok: false, error: "grammar is required" };
 
   try {
-    setGrammarMemorized(grammar.trim(), value === "yes");
+    const { supabase, user } = await getAuthedSupabase();
+    const { data: grammarRow, error: grammarError } = await supabase
+      .from("jlpt_grammar_items")
+      .select("id")
+      .eq("grammar", grammar.trim())
+      .maybeSingle();
+
+    if (grammarError) throw grammarError;
+    if (!grammarRow?.id) {
+      return { ok: false, error: "JLPT 문법 데이터에서 해당 문법을 찾지 못했습니다." };
+    }
+
+    const memorized = value === "yes";
+    const now = getNowIso();
+    const { error: progressError } = await supabase
+      .from("user_jlpt_grammar_progress")
+      .upsert(
+        {
+          user_id: user.id,
+          grammar_id: grammarRow.id,
+          memorized,
+          memorized_at: memorized ? now : null,
+          updated_at: now,
+        },
+        { onConflict: "user_id,grammar_id" }
+      );
+
+    if (progressError) throw progressError;
     return { ok: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

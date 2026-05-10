@@ -1,14 +1,16 @@
 import Link from "next/link";
-import { getGrammarWordbookList, getGrammarWordbookWords } from "@/lib/grammarWordbook";
+import {
+  getGrammarWordbookItemCountsByWordbookId,
+  getGrammarWordbookList,
+} from "@/lib/grammarWordbook";
 import { CreateGrammarWordbookForm } from "./components/CreateGrammarWordbookForm";
 import { WordbooksReorderPanel } from "./components/WordbooksReorderPanel";
 
 export default async function Grammar2Page() {
-  const wordbooks = await getGrammarWordbookList();
-  const wordCounts = new Map<string, number>();
-  for (const wb of wordbooks) {
-    wordCounts.set(wb.id, (await getGrammarWordbookWords(wb.id)).length);
-  }
+  const [wordbooks, wordCounts] = await Promise.all([
+    getGrammarWordbookList(),
+    getGrammarWordbookItemCountsByWordbookId(),
+  ]);
 
   return (
     <div className="p-8">

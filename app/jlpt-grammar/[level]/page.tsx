@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getGrammarWordbookList, getGrammarWordbookWords } from "@/lib/grammarWordbook";
+import { getAllGrammarWordbookGrammarTitles } from "@/lib/grammarWordbook";
 import {
-  getJlptGrammarItems,
+  getJlptGrammarItemsForList,
   JLPT_GRAMMAR_LEVELS as LEVELS,
 } from "@/lib/jlptGrammar";
 
@@ -10,14 +10,6 @@ type Props = {
   params: Promise<{ level: string }>;
   searchParams?: Promise<{ q?: string; page?: string }>;
 };
-
-function normalizeAudioUrl(u: string): string {
-  const s = String(u ?? "").trim();
-  if (!s) return "";
-  if (s.startsWith("http://") || s.startsWith("https://")) return s;
-  // 일부 데이터가 "/wp-content/..." 형태로 들어옴
-  return `https://nihongo.co.kr${s.startsWith("/") ? "" : "/"}${s}`;
-}
 
 function clampPage(p: number, totalPages: number): number {
   if (!Number.isFinite(p) || p < 1) return 1;
@@ -42,7 +34,10 @@ export default async function JlptGrammarLevelPage({ params, searchParams }: Pro
   const q = String(sp.q ?? "").trim();
   const pageRaw = String(sp.page ?? "").trim();
 
-  const detailList = await getJlptGrammarItems(level as (typeof LEVELS)[number]);
+  const [detailList, inWordbookSet] = await Promise.all([
+    getJlptGrammarItemsForList(level as (typeof LEVELS)[number]),
+    getAllGrammarWordbookGrammarTitles(),
+  ]);
   const query = q.toLowerCase();
   const filtered = query
     ? detailList.filter((x) => {
@@ -57,15 +52,6 @@ export default async function JlptGrammarLevelPage({ params, searchParams }: Pro
   const page = clampPage(requestedPage, totalPages);
   const start = (page - 1) * PAGE_SIZE;
   const pageItems = filtered.slice(start, start + PAGE_SIZE);
-
-  const wordbooks = await getGrammarWordbookList();
-  const inWordbookSet = new Set<string>();
-  for (const wb of wordbooks) {
-    for (const w of await getGrammarWordbookWords(wb.id)) {
-      const g = String(w.grammar ?? "").trim();
-      if (g) inWordbookSet.add(g);
-    }
-  }
 
   return (
     <div className="p-8">

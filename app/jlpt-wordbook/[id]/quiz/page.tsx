@@ -8,7 +8,10 @@ import {
   type JlptMemorizedListMode,
   type JlptQuizDisplayView,
 } from "@/lib/jlptWordbookShared";
-import { getJlptKanjiLinesForWord } from "@/lib/kanji";
+import {
+  getJlptKanjiCardInfoMap,
+  getJlptKanjiLinesForWordFromMap,
+} from "@/lib/kanji";
 import { getJlptWordbookMeta, getJlptWordbookWords } from "@/lib/jlptWordbook";
 import { JlptQuizCard } from "./components/JlptQuizCard";
 import { QuizSeedSync } from "@/app/quiz/components/QuizSeedSync";
@@ -60,6 +63,7 @@ export default async function JlptWordbookQuizPage({ params, searchParams }: Pro
   const allWords = await getJlptWordbookWords(id);
   const words = filterJlptWordbookRowsForQuiz(allWords, memorizedFilter, quizDisplayView);
   const rows = seededStableSort(words, seed, (w) => `${w.no}:${w.word}`);
+  const kanjiMap = await getJlptKanjiCardInfoMap();
 
   const cardQuizView = jlptQuizDisplayViewToCardView(quizDisplayView);
 
@@ -178,7 +182,7 @@ export default async function JlptWordbookQuizPage({ params, searchParams }: Pro
               wordbookId={id}
               quizView={cardQuizView}
               variant={jlptQuizCardVariantForFullRow(memorizedFilter, quizDisplayView)}
-              kanjiLines={getJlptKanjiLinesForWord(row.word)}
+              kanjiLines={getJlptKanjiLinesForWordFromMap(row.word, kanjiMap)}
             />
           ))}
         </div>

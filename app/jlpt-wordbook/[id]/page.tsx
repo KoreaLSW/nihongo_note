@@ -9,8 +9,13 @@ import {
     parseJlptMemorizedListParam,
     parseJlptWordbookListAxisParam,
     type JlptQuizDisplayView,
+    type JlptWordbookRow,
 } from '@/lib/jlptWordbookShared';
-import { getJlptKanjiLinesForWord } from '@/lib/kanji';
+import {
+    getJlptKanjiCardInfoMap,
+    getJlptKanjiLinesForWordFromMap,
+    type JlptWordKanjiLine,
+} from '@/lib/kanji';
 import { getJlptWordbookMeta, getJlptWordbookWords } from '@/lib/jlptWordbook';
 
 type Props = {
@@ -63,7 +68,7 @@ export default async function JlptWordbookDetailPage({
         );
     }
 
-    const allWords = await getJlptWordbookWords(id);
+    const allWords: JlptWordbookRow[] = await getJlptWordbookWords(id);
     const words =
         memorizedFilter === 'all'
             ? allWords
@@ -87,6 +92,16 @@ export default async function JlptWordbookDetailPage({
     const currentPage = Math.max(1, Math.min(page, totalPages));
     const start = (currentPage - 1) * PER_PAGE;
     const pageWords = searchedWords.slice(start, start + PER_PAGE);
+
+    let pageCards: { row: JlptWordbookRow; kanjiLines: JlptWordKanjiLine[] }[] =
+        [];
+    if (words.length > 0) {
+        const jlptKanjiCardMap = await getJlptKanjiCardInfoMap();
+        pageCards = pageWords.map((row) => ({
+            row,
+            kanjiLines: getJlptKanjiLinesForWordFromMap(row.word, jlptKanjiCardMap),
+        }));
+    }
     const startPage =
         Math.floor((currentPage - 1) / PAGE_GROUP) * PAGE_GROUP + 1;
     const endPage = Math.min(startPage + PAGE_GROUP - 1, totalPages);
@@ -297,9 +312,7 @@ export default async function JlptWordbookDetailPage({
             ) : (
                 <>
                     <div className='mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'>
-                        {pageWords.map((row) => {
-                            const kanjiLines = getJlptKanjiLinesForWord(row.word);
-                            return (
+                        {pageCards.map(({ row, kanjiLines }) => (
                             <div
                                 key={`${row.no}-${row.word}`}
                                 className='rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-800/50'
@@ -321,7 +334,7 @@ export default async function JlptWordbookDetailPage({
                                                     한자:
                                                 </span>
                                                 <div className='min-w-0 space-y-0.5'>
-                                                    {kanjiLines.map((k) => {
+                                                    {kanjiLines.map((k: JlptWordKanjiLine) => {
                                                         const lineText =
                                                             k.found && k.level
                                                                 ? k.meaningShort
@@ -418,8 +431,7 @@ export default async function JlptWordbookDetailPage({
                                     />
                                 </div>
                             </div>
-                            );
-                        })}
+                        ))}
                     </div>
 
                     {totalPages > 1 && (

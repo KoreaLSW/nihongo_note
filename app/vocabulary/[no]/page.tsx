@@ -12,7 +12,7 @@ export default async function VocabularyDetailPage({ params }: Props) {
   const row = await getNoteByNo(no);
   if (!row) notFound();
 
-  const kanjiDetail = getKanjiDetailByWord(row.word);
+  const kanjiDetail = await getKanjiDetailByWord(row.word);
 
   return (
     <div className="p-8">

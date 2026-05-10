@@ -1,11 +1,4 @@
-import fs from "fs";
-import path from "path";
-import { parse } from "csv-parse/sync";
-import { stringify } from "csv-stringify/sync";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-
-const WORDBOOKS_DIR = "vocabulary_words";
-const MANIFEST_FILE = "wordbooks.json";
 
 export type WordbookMeta = {
   id: string;
@@ -26,57 +19,156 @@ export type WordbookRow = {
   reviewed_at?: string;
 };
 
-function getDir(): string {
-  return path.join(process.cwd(), "public", WORDBOOKS_DIR);
-}
+const VOCAB_WORDS_PAGE = 1000;
 
-function getManifestPath(): string {
-  return path.join(getDir(), MANIFEST_FILE);
-}
+async function fetchAllUserVocabularyWordRows(
+  selectColumns: string
+): Promise<Array<Record<string, unknown>>> {
+  const supabase = await createSupabaseServerClient();
+  const rows: Array<Record<string, unknown>> = [];
+  for (let from = 0; ; from += VOCAB_WORDS_PAGE) {
+    const { data, error } = await supabase
+      .from("vocabulary_words")
+      .select(selectColumns)
+      .order("id", { ascending: true })
+      .range(from, from + VOCAB_WORDS_PAGE - 1);
 
-function getKstNow(): string {
-  return new Date().toLocaleString("sv-SE", {
-    timeZone: "Asia/Seoul",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
-}
-
-function ensureDir(): void {
-  const dir = getDir();
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-}
-
-function loadManifest(): WordbookMeta[] {
-  ensureDir();
-  const p = getManifestPath();
-  if (!fs.existsSync(p)) return [];
-  const raw = fs.readFileSync(p, "utf-8");
-  try {
-    const data = JSON.parse(raw);
-    return Array.isArray(data) ? data : [];
-  } catch {
-    return [];
+    if (error) throw error;
+    if (!data?.length) break;
+    rows.push(...(data as unknown as Array<Record<string, unknown>>));
+    if (data.length < VOCAB_WORDS_PAGE) break;
   }
+  return rows;
 }
 
-function saveManifest(list: WordbookMeta[]): void {
-  ensureDir();
-  fs.writeFileSync(
-    getManifestPath(),
-    JSON.stringify(list, null, 2),
-    "utf-8"
+/** RLS 범위 내 모든 `vocabulary_words`를 페이지 단위로 가져와 한자 → 속한 단어장 id 집합 맵 생성 */
+export async function getWordToWordbookIdsMap(): Promise<
+  Map<string, Set<string>>
+> {
+  const data = await fetchAllUserVocabularyWordRows("word,wordbook_id");
+
+  const map = new Map<string, Set<string>>();
+  for (const row of data) {
+    const w = String(row["word"] ?? "").trim();
+    const wbId = String(row["wordbook_id"] ?? "").trim();
+    if (!w || !wbId) continue;
+    const set = map.get(w) ?? new Set<string>();
+    set.add(wbId);
+    map.set(w, set);
+  }
+  return map;
+}
+
+/** 단어장별 단어 개수 (목록 카드용, 페이지네이션으로 전 행 스캔) */
+export async function getVocabularyWordCountsByWordbookId(): Promise<
+  Map<string, number>
+> {
+  const data = await fetchAllUserVocabularyWordRows("wordbook_id");
+
+  const counts = new Map<string, number>();
+  for (const row of data) {
+    const id = String(row["wordbook_id"] ?? "");
+    if (!id) continue;
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function mapDbRowToWordbookRow(r: {
+  sort_order?: number | string | null;
+  word?: string | null;
+  reading?: string | null;
+  meaning?: string | null;
+  level?: string | null;
+  created_at?: string | null;
+}): WordbookRow {
+  return {
+    no: String(r.sort_order ?? ""),
+    word: String(r.word ?? ""),
+    reading: String(r.reading ?? ""),
+    meaning: String(r.meaning ?? ""),
+    level: String(r.level ?? ""),
+    created_at: String(r.created_at ?? ""),
+  };
+}
+
+async function kanjiProgressByTrimmedWords(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  words: string[]
+): Promise<
+  Map<
+    string,
+    { memorized: string; memorized_at: string; reviewed_at: string }
+  >
+> {
+  const result = new Map<
+    string,
+    { memorized: string; memorized_at: string; reviewed_at: string }
+  >();
+  const uniq = Array.from(
+    new Set(words.map((w) => w.trim()).filter(Boolean))
   );
-}
+  if (uniq.length === 0) return result;
 
-/** 단어장 목록 */
-function getWordbookListFromCsv(): WordbookMeta[] {
-  return loadManifest();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return result;
+
+  const KANJI_ID_CHUNK = 200;
+  const kanjiIdByWord = new Map<string, number>();
+  for (let i = 0; i < uniq.length; i += KANJI_ID_CHUNK) {
+    const chunk = uniq.slice(i, i + KANJI_ID_CHUNK);
+    const { data: kanjiRows, error: kanjiError } = await supabase
+      .from("kanji_items")
+      .select("id,kanji")
+      .in("kanji", chunk);
+    if (kanjiError) return result;
+    for (const row of kanjiRows ?? []) {
+      const k = String(row.kanji ?? "").trim();
+      const idNum = Number(row.id);
+      if (k && Number.isFinite(idNum)) kanjiIdByWord.set(k, idNum);
+    }
+  }
+  if (kanjiIdByWord.size === 0) return result;
+
+  const ids = Array.from(kanjiIdByWord.values()).filter((id) =>
+    Number.isFinite(id)
+  );
+
+  const progressByKanjiId = new Map<
+    number,
+    { memorized: string; memorized_at: string; reviewed_at: string }
+  >();
+  for (let i = 0; i < ids.length; i += KANJI_ID_CHUNK) {
+    const chunk = ids.slice(i, i + KANJI_ID_CHUNK);
+    const { data: progressRows, error: progressError } = await supabase
+      .from("user_kanji_progress")
+      .select("kanji_id,memorized,memorized_at,reviewed_at")
+      .eq("user_id", user.id)
+      .in("kanji_id", chunk);
+    if (progressError || !progressRows) return result;
+    for (const row of progressRows) {
+      const kid = Number(row.kanji_id);
+      if (!Number.isFinite(kid)) continue;
+      progressByKanjiId.set(kid, {
+        memorized: row.memorized ? "yes" : "no",
+        memorized_at: String(row.memorized_at ?? ""),
+        reviewed_at: String(row.reviewed_at ?? ""),
+      });
+    }
+  }
+
+  for (const w of uniq) {
+    const kanjiId = kanjiIdByWord.get(w);
+    const progress = kanjiId ? progressByKanjiId.get(kanjiId) : undefined;
+    result.set(w, {
+      memorized: progress?.memorized ?? "no",
+      memorized_at: progress?.memorized_at ?? "",
+      reviewed_at: progress?.reviewed_at ?? "",
+    });
+  }
+  return result;
 }
 
 export async function getWordbookList(): Promise<WordbookMeta[]> {
@@ -87,105 +179,11 @@ export async function getWordbookList(): Promise<WordbookMeta[]> {
     .order("sort_order", { ascending: true, nullsFirst: false })
     .order("created_at", { ascending: true });
 
-  if (error || !data) return getWordbookListFromCsv();
+  if (error || !data) throw error ?? new Error("vocabulary_wordbooks query failed");
   return data.map((r) => ({
     id: String(r.id ?? ""),
     name: String(r.name ?? ""),
     file: "",
-  }));
-}
-
-/** 단어장 목록 순서 변경 (manifest 배열 순서 업데이트) */
-export function reorderWordbooks(wordbookIds: string[]): void {
-  if (!Array.isArray(wordbookIds)) throw new Error("wordbookIds must be an array");
-
-  const list = loadManifest();
-  const byId = new Map(list.map((m) => [m.id, m] as const));
-
-  const ordered: WordbookMeta[] = [];
-  const used = new Set<string>();
-
-  for (const rawId of wordbookIds) {
-    const id = String(rawId ?? "").trim();
-    const meta = byId.get(id);
-    if (meta && !used.has(id)) {
-      ordered.push(meta);
-      used.add(id);
-    }
-  }
-
-  // ids에 없는 항목은 기존 순서를 유지한 채 뒤에 붙임
-  for (const m of list) {
-    if (!used.has(m.id)) ordered.push(m);
-  }
-
-  saveManifest(ordered);
-}
-
-/** 단어장 생성 (새 CSV 파일 + manifest 추가) */
-export function createWordbook(name: string, userId?: string): WordbookMeta {
-  const trimmed = (name ?? "").trim();
-  if (!trimmed) throw new Error("name is required");
-
-  const list = loadManifest();
-  const id =
-    Date.now().toString(36) +
-    Math.random().toString(36).slice(2, 8);
-  const file = `${id}.csv`;
-  const meta: WordbookMeta = { id, name: trimmed, file };
-  if (userId) meta.user_id = userId;
-  list.push(meta);
-  saveManifest(list);
-
-  const csvPath = path.join(getDir(), file);
-  const headers = ["no", "word", "reading", "meaning", "level", "created_at"];
-  const csv = stringify([], { header: true, columns: headers });
-  fs.writeFileSync(csvPath, csv, "utf-8");
-
-  return meta;
-}
-
-export function deleteWordbook(wordbookId: string): void {
-  const id = String(wordbookId ?? "").trim();
-  if (!id) throw new Error("wordbookId is required");
-
-  const list = loadManifest();
-  const target = list.find((m) => m.id === id);
-  if (!target) throw new Error("wordbook not found");
-
-  const csvPath = path.join(getDir(), target.file);
-  if (fs.existsSync(csvPath)) fs.unlinkSync(csvPath);
-
-  saveManifest(list.filter((m) => m.id !== id));
-}
-
-function getCsvPath(wordbookId: string): string | null {
-  const list = loadManifest();
-  const meta = list.find((m) => m.id === wordbookId);
-  if (!meta) return null;
-  return path.join(getDir(), meta.file);
-}
-
-/** 단어장 내 단어 목록 */
-function getWordbookWordsFromCsv(wordbookId: string): WordbookRow[] {
-  const csvPath = getCsvPath(wordbookId);
-  if (!csvPath || !fs.existsSync(csvPath)) return [];
-
-  let raw = fs.readFileSync(csvPath, "utf-8");
-  if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);
-  const records = parse(raw, {
-    columns: true,
-    skip_empty_lines: true,
-    relax_column_count: true,
-  }) as Array<Record<string, string>>;
-
-  return records.map((r) => ({
-    no: r.no ?? "",
-    word: r.word ?? "",
-    reading: r.reading ?? "",
-    meaning: r.meaning ?? "",
-    level: r.level ?? "",
-    created_at: r.created_at ?? "",
   }));
 }
 
@@ -197,15 +195,9 @@ export async function getWordbookWords(wordbookId: string): Promise<WordbookRow[
     .eq("wordbook_id", wordbookId)
     .order("sort_order", { ascending: true });
 
-  if (error || !data) return getWordbookWordsFromCsv(wordbookId);
-  const rows = data.map((r) => ({
-    no: String(r.sort_order ?? ""),
-    word: String(r.word ?? ""),
-    reading: String(r.reading ?? ""),
-    meaning: String(r.meaning ?? ""),
-    level: String(r.level ?? ""),
-    created_at: String(r.created_at ?? ""),
-  }));
+  if (error || !data) throw error ?? new Error("vocabulary_words query failed");
+
+  const rows = data.map((r) => mapDbRowToWordbookRow(r));
   return attachKanjiProgress(supabase, rows);
 }
 
@@ -213,51 +205,13 @@ async function attachKanjiProgress(
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
   rows: WordbookRow[]
 ): Promise<WordbookRow[]> {
-  const words = Array.from(
-    new Set(rows.map((row) => row.word.trim()).filter(Boolean))
-  );
+  const words = rows.map((row) => row.word.trim()).filter(Boolean);
   if (words.length === 0) return rows;
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return rows;
-
-  const { data: kanjiRows, error: kanjiError } = await supabase
-    .from("kanji_items")
-    .select("id,kanji")
-    .in("kanji", words);
-
-  if (kanjiError || !kanjiRows || kanjiRows.length === 0) return rows;
-
-  const kanjiIdByWord = new Map(
-    kanjiRows.map((row) => [String(row.kanji ?? ""), Number(row.id)])
-  );
-  const ids = Array.from(kanjiIdByWord.values()).filter((id) => Number.isFinite(id));
-  if (ids.length === 0) return rows;
-
-  const { data: progressRows, error: progressError } = await supabase
-    .from("user_kanji_progress")
-    .select("kanji_id,memorized,memorized_at,reviewed_at")
-    .eq("user_id", user.id)
-    .in("kanji_id", ids);
-
-  if (progressError || !progressRows) return rows;
-
-  const progressByKanjiId = new Map(
-    progressRows.map((row) => [
-      Number(row.kanji_id),
-      {
-        memorized: row.memorized ? "yes" : "no",
-        memorized_at: String(row.memorized_at ?? ""),
-        reviewed_at: String(row.reviewed_at ?? ""),
-      },
-    ])
-  );
-
+  const progressMap = await kanjiProgressByTrimmedWords(supabase, words);
   return rows.map((row) => {
-    const kanjiId = kanjiIdByWord.get(row.word);
-    const progress = kanjiId ? progressByKanjiId.get(kanjiId) : undefined;
+    const k = row.word.trim();
+    const progress = k ? progressMap.get(k) : undefined;
     return {
       ...row,
       memorized: progress?.memorized ?? "no",
@@ -267,118 +221,186 @@ async function attachKanjiProgress(
   });
 }
 
-/** 단어장에 단어 추가 */
-export function appendWordToWordbook(
-  wordbookId: string,
-  entry: { word: string; reading?: string; meaning: string; level: string }
-): void {
-  const csvPath = getCsvPath(wordbookId);
-  if (!csvPath) throw new Error("wordbook not found");
+export async function getWordbookWordsCount(
+  wordbookId: string
+): Promise<number> {
+  const supabase = await createSupabaseServerClient();
+  const { count, error } = await supabase
+    .from("vocabulary_words")
+    .select("id", { count: "exact", head: true })
+    .eq("wordbook_id", wordbookId);
 
-  const word = (entry.word ?? "").trim();
-  if (!word) throw new Error("word is required");
-
-  let records: Array<Record<string, string>> = [];
-  if (fs.existsSync(csvPath)) {
-    let raw = fs.readFileSync(csvPath, "utf-8");
-    if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);
-    records = parse(raw, {
-      columns: true,
-      skip_empty_lines: true,
-      relax_column_count: true,
-    }) as Array<Record<string, string>>;
-  }
-
-  const exists = records.some((r) => (r.word ?? "").trim() === word);
-  if (exists) throw new Error("duplicate: word already in this wordbook");
-
-  const maxNo = records.reduce((max, r) => {
-    const n = parseInt(String(r.no ?? "0"), 10) || 0;
-    return n > max ? n : max;
-  }, 0);
-  const nextNo = String(maxNo + 1);
-
-  records.push({
-    no: nextNo,
-    word,
-    reading: (entry.reading ?? "").trim(),
-    meaning: (entry.meaning ?? "").trim(),
-    level: (entry.level ?? "").trim() || "N5",
-    created_at: getKstNow(),
-  });
-
-  const headers = ["no", "word", "reading", "meaning", "level", "created_at"];
-  const csv = stringify(records, { header: true, columns: headers });
-  fs.writeFileSync(csvPath, csv, "utf-8");
+  if (error) throw error;
+  return count ?? 0;
 }
 
-/** 단어장에서 단어 삭제 */
-export function removeWordFromWordbook(wordbookId: string, word: string): void {
-  const csvPath = getCsvPath(wordbookId);
-  if (!csvPath || !fs.existsSync(csvPath)) throw new Error("wordbook not found");
+/** 한자단어장 목록: `memorizedMode=all`이면 페이지만 DB에서 가져오고, yes/no면 암기 판별용으로 `sort_order+word` 전행을 한 번 로드한 뒤 해당 페이지 행만 풀 조회합니다. */
+export async function getWordbookWordsListPage(opts: {
+  wordbookId: string;
+  page: number;
+  perPage: number;
+  memorizedMode: "all" | "yes" | "no";
+}): Promise<{
+  words: WordbookRow[];
+  filteredTotal: number;
+  wordbookTotal: number;
+  page: number;
+}> {
+  const { wordbookId, perPage, memorizedMode } = opts;
+  const requestedPage = Math.max(1, opts.page || 1);
 
-  const w = (word ?? "").trim();
-  if (!w) throw new Error("word is required");
+  const supabase = await createSupabaseServerClient();
+  const wordbookTotal = await getWordbookWordsCount(wordbookId);
 
-  let raw = fs.readFileSync(csvPath, "utf-8");
-  if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);
-  const records = parse(raw, {
-    columns: true,
-    skip_empty_lines: true,
-    relax_column_count: true,
-  }) as Array<Record<string, string>>;
-
-  const filtered = records.filter((r) => (r.word ?? "").trim() !== w);
-  if (filtered.length === records.length) throw new Error("word not found");
-
-  const headers = ["no", "word", "reading", "meaning", "level", "created_at"];
-  const renumbered = filtered.map((r, i) => ({ ...r, no: String(i + 1) }));
-  const csv = stringify(renumbered, { header: true, columns: headers });
-  fs.writeFileSync(csvPath, csv, "utf-8");
-}
-
-/** 단어장 단어 순서 변경 (wordOrder: 새 순서의 word 배열) */
-export function reorderWordbookWords(
-  wordbookId: string,
-  wordOrder: string[]
-): void {
-  const csvPath = getCsvPath(wordbookId);
-  if (!csvPath || !fs.existsSync(csvPath)) throw new Error("wordbook not found");
-
-  let raw = fs.readFileSync(csvPath, "utf-8");
-  if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);
-  const records = parse(raw, {
-    columns: true,
-    skip_empty_lines: true,
-    relax_column_count: true,
-  }) as Array<Record<string, string>>;
-
-  const byWord = new Map<string, Record<string, string>>();
-  for (const r of records) {
-    const w = (r.word ?? "").trim();
-    if (w) byWord.set(w, { ...r });
+  if (wordbookTotal === 0) {
+    return { words: [], filteredTotal: 0, wordbookTotal: 0, page: 1 };
   }
 
-  const ordered: Array<Record<string, string>> = [];
-  for (let i = 0; i < wordOrder.length; i++) {
-    const w = (wordOrder[i] ?? "").trim();
-    const row = byWord.get(w);
-    if (row) {
-      ordered.push({ ...row, no: String(i + 1) });
+  if (memorizedMode === "all") {
+    const filteredTotal = wordbookTotal;
+    const totalPages = Math.max(1, Math.ceil(filteredTotal / perPage));
+    const page = Math.min(requestedPage, totalPages);
+    const from = (page - 1) * perPage;
+
+    const { data, error } = await supabase
+      .from("vocabulary_words")
+      .select("id,sort_order,word,reading,meaning,level,created_at")
+      .eq("wordbook_id", wordbookId)
+      .order("sort_order", { ascending: true })
+      .range(from, from + perPage - 1);
+
+    if (error || !data)
+      throw error ?? new Error("vocabulary_words page query failed");
+
+    const rows = data.map((r) => mapDbRowToWordbookRow(r));
+    const words = await attachKanjiProgress(supabase, rows);
+    return { words, filteredTotal, wordbookTotal, page };
+  }
+
+  const { data: skeletonRaw, error: skErr } = await supabase
+    .from("vocabulary_words")
+    .select("sort_order,word")
+    .eq("wordbook_id", wordbookId)
+    .order("sort_order", { ascending: true });
+
+  if (skErr || !skeletonRaw)
+    throw skErr ?? new Error("vocabulary_words skeleton failed");
+
+  const trimmedList = skeletonRaw.map((row) =>
+    String(row.word ?? "").trim()
+  );
+  const progressMap = await kanjiProgressByTrimmedWords(
+    supabase,
+    trimmedList
+  );
+
+  type Sk = { sortOrder: number; wordTrim: string };
+  const filtered: Sk[] = [];
+  for (const row of skeletonRaw) {
+    const so = Number(row.sort_order);
+    if (!Number.isFinite(so)) continue;
+    const wordTrim = String(row.word ?? "").trim();
+    const m =
+      (wordTrim ? progressMap.get(wordTrim)?.memorized : undefined) ?? "no";
+    if (memorizedMode === "yes") {
+      if (m !== "yes") continue;
+    } else {
+      /* memorizedMode === "no" */
+      if (m === "yes") continue;
     }
+    filtered.push({ sortOrder: so, wordTrim });
   }
-  const headers = ["no", "word", "reading", "meaning", "level", "created_at"];
-  const csv = stringify(ordered, { header: true, columns: headers });
-  fs.writeFileSync(csvPath, csv, "utf-8");
+
+  const filteredTotal = filtered.length;
+  if (filteredTotal === 0) {
+    return { words: [], filteredTotal: 0, wordbookTotal, page: 1 };
+  }
+
+  const totalPages = Math.max(1, Math.ceil(filteredTotal / perPage));
+  const page = Math.min(requestedPage, totalPages);
+  const start = (page - 1) * perPage;
+  const slice = filtered.slice(start, start + perPage);
+  const sortOrders = slice.map((s) => s.sortOrder);
+
+  const { data: fullRowsRaw, error: fullErr } = await supabase
+    .from("vocabulary_words")
+    .select("id,sort_order,word,reading,meaning,level,created_at")
+    .eq("wordbook_id", wordbookId)
+    .in("sort_order", sortOrders);
+
+  if (fullErr || !fullRowsRaw)
+    throw fullErr ?? new Error("vocabulary_words full row fetch failed");
+
+  const bySort = new Map<number, WordbookRow>();
+  for (const r of fullRowsRaw) {
+    const so = Number(r.sort_order);
+    if (Number.isFinite(so)) bySort.set(so, mapDbRowToWordbookRow(r));
+  }
+
+  const ordered: WordbookRow[] = [];
+  for (const s of slice) {
+    const row = bySort.get(s.sortOrder);
+    if (!row) continue;
+    const p = progressMap.get(s.wordTrim);
+    ordered.push({
+      ...row,
+      memorized: p?.memorized ?? "no",
+      memorized_at: p?.memorized_at ?? "",
+      reviewed_at: p?.reviewed_at ?? "",
+    });
+  }
+
+  return { words: ordered, filteredTotal, wordbookTotal, page };
 }
 
-/** 단어장 id로 메타 조회 */
-function getWordbookMetaFromCsv(wordbookId: string): WordbookMeta | null {
-  const list = loadManifest();
-  return list.find((m) => m.id === wordbookId) ?? null;
+/** 같은 단어장 내 이전·다음 `sort_order` (상세 페이지 네비) */
+export async function getWordbookPrevNextNos(
+  wordbookId: string,
+  currentNo: string
+): Promise<{ prevNo: string | null; nextNo: string | null }> {
+  const cur = Number(String(currentNo ?? "").trim());
+  if (!Number.isFinite(cur)) {
+    return { prevNo: null, nextNo: null };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const [prevResult, nextResult] = await Promise.all([
+    supabase
+      .from("vocabulary_words")
+      .select("sort_order")
+      .eq("wordbook_id", wordbookId)
+      .lt("sort_order", cur)
+      .order("sort_order", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from("vocabulary_words")
+      .select("sort_order")
+      .eq("wordbook_id", wordbookId)
+      .gt("sort_order", cur)
+      .order("sort_order", { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+
+  if (prevResult.error) throw prevResult.error;
+  if (nextResult.error) throw nextResult.error;
+
+  return {
+    prevNo:
+      prevResult.data?.sort_order != null
+        ? String(prevResult.data.sort_order)
+        : null,
+    nextNo:
+      nextResult.data?.sort_order != null
+        ? String(nextResult.data.sort_order)
+        : null,
+  };
 }
 
-export async function getWordbookMeta(wordbookId: string): Promise<WordbookMeta | null> {
+export async function getWordbookMeta(
+  wordbookId: string
+): Promise<WordbookMeta | null> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("vocabulary_wordbooks")
@@ -386,34 +408,31 @@ export async function getWordbookMeta(wordbookId: string): Promise<WordbookMeta 
     .eq("id", wordbookId)
     .maybeSingle();
 
-  if (error || !data) return getWordbookMetaFromCsv(wordbookId);
+  if (error) throw error;
+  if (!data) return null;
   return { id: String(data.id ?? ""), name: String(data.name ?? ""), file: "" };
 }
 
-/** 단어장 이름 변경 (manifest만 업데이트) */
-export function renameWordbook(wordbookId: string, newName: string): void {
-  const id = String(wordbookId ?? "").trim();
-  const name = String(newName ?? "").trim();
-  if (!id) throw new Error("wordbookId is required");
-  if (!name) throw new Error("name is required");
-
-  const list = loadManifest();
-  const idx = list.findIndex((m) => m.id === id);
-  if (idx < 0) throw new Error("wordbook not found");
-
-  const prev = list[idx];
-  list[idx] = { ...prev, name };
-  saveManifest(list);
-}
-
-/** 단어장 내 no에 해당하는 단어 한 건 */
-export function getWordbookWordByNo(
+export async function getWordbookWordByNo(
   wordbookId: string,
   no: string
 ): Promise<WordbookRow | null> {
-  return getWordbookWords(wordbookId).then((words) => {
   const noTrim = String(no ?? "").trim();
-  const row = words.find((r) => String(r.no).trim() === noTrim);
-  return row ?? null;
-  });
+  const sortNum = Number(noTrim);
+  if (!Number.isFinite(sortNum)) return null;
+
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("vocabulary_words")
+    .select("id,sort_order,word,reading,meaning,level,created_at")
+    .eq("wordbook_id", wordbookId)
+    .eq("sort_order", sortNum)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) return null;
+
+  const row = mapDbRowToWordbookRow(data);
+  const [withProgress] = await attachKanjiProgress(supabase, [row]);
+  return withProgress ?? null;
 }

@@ -9,7 +9,7 @@ type Props = {
 
 export default async function KanjiDetailPage({ params }: Props) {
   const { level, no } = await params;
-  const detail = getKanjiDetail(no, level);
+  const detail = await getKanjiDetail(no, level);
   if (!detail) notFound();
 
   return (

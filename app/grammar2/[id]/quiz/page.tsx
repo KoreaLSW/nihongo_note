@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getGrammarWordbookMeta, getGrammarWordbookWords } from "@/lib/grammarWordbook";
-import { getGrammarMemorizedMap } from "@/lib/grammarMemorized";
 import { GrammarQuizCard } from "./components/GrammarQuizCard";
 import { QuizSeedSync } from "@/app/quiz/components/QuizSeedSync";
 
@@ -37,12 +36,10 @@ export default async function GrammarWordbookQuizPage({ params, searchParams }: 
   const meta = await getGrammarWordbookMeta(id);
   if (!meta) notFound();
 
-  const memMap = getGrammarMemorizedMap();
   const allRows = (await getGrammarWordbookWords(id)).map((row) => {
-    const memo = memMap.get(row.grammar);
     return {
       ...row,
-      memorized: memo?.memorized === "yes" ? "yes" : "no",
+      memorized: row.memorized === "yes" ? "yes" : "no",
     } as const;
   });
   const filtered =

@@ -1,14 +1,16 @@
 import Link from "next/link";
-import { getWordbookList, getWordbookWords } from "@/lib/wordbook";
+import {
+  getVocabularyWordCountsByWordbookId,
+  getWordbookList,
+} from "@/lib/wordbook";
 import { CreateWordbookForm } from "./components/CreateWordbookForm";
 import { WordbooksReorderPanel } from "./components/WordbooksReorderPanel";
 
 export default async function Vocabulary2Page() {
-  const wordbooks = await getWordbookList();
-  const wordCounts = new Map<string, number>();
-  for (const wb of wordbooks) {
-    wordCounts.set(wb.id, (await getWordbookWords(wb.id)).length);
-  }
+  const [wordbooks, wordCounts] = await Promise.all([
+    getWordbookList(),
+    getVocabularyWordCountsByWordbookId(),
+  ]);
 
   return (
     <div className="p-8">
