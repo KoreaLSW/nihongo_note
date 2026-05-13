@@ -303,11 +303,34 @@ export async function reorderGrammarWordbooksAction(wordbookIds: string[]) {
 export async function setGrammarMemorizedAction(formData: FormData) {
   const grammar = (formData.get("grammar") as string) ?? "";
   const value = (formData.get("value") as string) ?? "no";
+  const wordbookId = String(formData.get("wordbookId") ?? "").trim();
+  const noRaw = String(formData.get("no") ?? "").trim();
 
   if (!grammar.trim()) return { ok: false, error: "grammar is required" };
 
   try {
     const { supabase, user } = await getAuthedSupabase();
+    const memorized = value === "yes";
+    const now = getNowIso();
+    let updatedItem = false;
+
+    if (wordbookId && noRaw) {
+      await assertGrammarWordbookOwner(supabase, user.id, wordbookId);
+      const sortOrder = parseInt(noRaw, 10);
+      if (Number.isFinite(sortOrder)) {
+        const { error: itemErr } = await supabase
+          .from("grammar_wordbook_items")
+          .update({
+            memorized,
+            memorized_at: memorized ? now : null,
+            updated_at: now,
+          })
+          .match({ wordbook_id: wordbookId, sort_order: sortOrder });
+        if (itemErr) throw itemErr;
+        updatedItem = true;
+      }
+    }
+
     const { data: grammarRow, error: grammarError } = await supabase
       .from("jlpt_grammar_items")
       .select("id")
@@ -315,26 +338,33 @@ export async function setGrammarMemorizedAction(formData: FormData) {
       .maybeSingle();
 
     if (grammarError) throw grammarError;
-    if (!grammarRow?.id) {
-      return { ok: false, error: "JLPT 문법 데이터에서 해당 문법을 찾지 못했습니다." };
+
+    let updatedJlpt = false;
+    if (grammarRow?.id) {
+      const { error: progressError } = await supabase
+        .from("user_jlpt_grammar_progress")
+        .upsert(
+          {
+            user_id: user.id,
+            grammar_id: grammarRow.id,
+            memorized,
+            memorized_at: memorized ? now : null,
+            updated_at: now,
+          },
+          { onConflict: "user_id,grammar_id" }
+        );
+      if (progressError) throw progressError;
+      updatedJlpt = true;
     }
 
-    const memorized = value === "yes";
-    const now = getNowIso();
-    const { error: progressError } = await supabase
-      .from("user_jlpt_grammar_progress")
-      .upsert(
-        {
-          user_id: user.id,
-          grammar_id: grammarRow.id,
-          memorized,
-          memorized_at: memorized ? now : null,
-          updated_at: now,
-        },
-        { onConflict: "user_id,grammar_id" }
-      );
+    if (!updatedItem && !updatedJlpt) {
+      return {
+        ok: false,
+        error:
+          "해당 문법을 저장할 수 없습니다. Supabase에서 public/query/10_grammar_wordbook_items_memorized.sql을 실행했는지, 또는 JLPT 문법 목록과 제목이 일치하는지 확인하세요.",
+      };
+    }
 
-    if (progressError) throw progressError;
     return { ok: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

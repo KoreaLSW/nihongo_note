@@ -154,6 +154,9 @@ create table if not exists public.vocabulary_words (
   reading text not null default '',
   meaning text not null default '',
   level text not null default '',
+  memorized boolean not null default false,
+  memorized_at timestamptz,
+  reviewed_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (wordbook_id, word)
@@ -196,6 +199,8 @@ create table if not exists public.grammar_wordbook_items (
   meaning text not null default '',
   interpretation text not null default '',
   example text not null default '',
+  memorized boolean not null default false,
+  memorized_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (wordbook_id, grammar)

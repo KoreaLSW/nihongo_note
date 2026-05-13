@@ -272,7 +272,7 @@ export default async function GrammarWordbookWordDetailPage({
       </div>
 
       <div className="mt-6 flex flex-wrap items-center gap-2 border-t border-zinc-200 pt-6 dark:border-zinc-700">
-        <GrammarDetailActions row={actionRow} />
+        <GrammarDetailActions wordbookId={id} no={row.no} row={actionRow} />
         <GrammarDetailDeleteButton wordbookId={id} grammar={row.grammar} />
       </div>
     </div>

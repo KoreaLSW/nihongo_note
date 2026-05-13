@@ -100,7 +100,9 @@ export async function getGrammarWordbookWords(
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("grammar_wordbook_items")
-    .select("id,sort_order,grammar,shape,meaning,interpretation,example,created_at")
+    .select(
+      "id,sort_order,grammar,shape,meaning,interpretation,example,created_at,memorized,memorized_at"
+    )
     .eq("wordbook_id", wordbookId)
     .order("sort_order", { ascending: true });
 
@@ -113,13 +115,27 @@ export async function getGrammarWordbookWords(
     interpretation: String(r.interpretation ?? ""),
     example: String(r.example ?? ""),
     created_at: String(r.created_at ?? ""),
+    memorized_item: r.memorized === true,
+    memorized_item_at: r.memorized_at ? String(r.memorized_at) : "",
   }));
   return attachJlptGrammarProgress(supabase, rows);
 }
 
+type GrammarRowWithItemMemo = {
+  no: string;
+  grammar: string;
+  shape: string;
+  meaning: string;
+  interpretation: string;
+  example: string;
+  created_at: string;
+  memorized_item: boolean;
+  memorized_item_at: string;
+};
+
 async function attachJlptGrammarProgress(
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
-  rows: GrammarWordbookRow[]
+  rows: GrammarRowWithItemMemo[]
 ): Promise<GrammarWordbookRow[]> {
   const grammars = Array.from(
     new Set(rows.map((row) => row.grammar.trim()).filter(Boolean))
@@ -167,10 +183,23 @@ async function attachJlptGrammarProgress(
   return rows.map((row) => {
     const grammarId = grammarIdByTitle.get(row.grammar);
     const progress = grammarId ? progressByGrammarId.get(grammarId) : undefined;
+    const jlptYes = progress?.memorized === "yes";
+    const itemYes = row.memorized_item;
+    const yes = itemYes || jlptYes;
     return {
-      ...row,
-      memorized: progress?.memorized ?? "no",
-      memorized_at: progress?.memorized_at ?? "",
+      no: row.no,
+      grammar: row.grammar,
+      shape: row.shape,
+      meaning: row.meaning,
+      interpretation: row.interpretation,
+      example: row.example,
+      created_at: row.created_at,
+      memorized: yes ? "yes" : "no",
+      memorized_at: yes
+        ? itemYes
+          ? row.memorized_item_at
+          : progress?.memorized_at ?? ""
+        : "",
     };
   });
 }

@@ -12,6 +12,8 @@ export type NoteRow = {
   memorized_at: string;
   reviewed_at: string;
   created_at: string;
+  /** `vocabulary_words` 퀴즈·토글 시 서버가 행을 찾기 위해 사용 */
+  wordbookId?: string;
 };
 
 export type NoteListResult = {

@@ -17,6 +17,56 @@ async function getAuthedSupabase() {
   return { supabase, user };
 }
 
+async function assertVocabularyWordbookOwner(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  userId: string,
+  wordbookId: string
+): Promise<void> {
+  const { data, error } = await supabase
+    .from("vocabulary_wordbooks")
+    .select("id")
+    .eq("id", wordbookId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) throw new Error("단어장을 찾을 수 없습니다.");
+}
+
+function parseKanjiWordbookContext(formData: FormData): {
+  wordbookId: string | null;
+  sortOrder: number | null;
+} {
+  const wordbookId = String(formData.get("wordbookId") ?? "").trim();
+  const noRaw = String(formData.get("no") ?? "").trim();
+  const sortOrder = noRaw ? Number(noRaw) : NaN;
+  if (!wordbookId || !Number.isFinite(sortOrder))
+    return { wordbookId: null, sortOrder: null };
+  return { wordbookId, sortOrder };
+}
+
+async function updateKanjiWordbookWordRow(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  userId: string,
+  wordbookId: string,
+  sortOrder: number,
+  patch: Record<string, unknown>
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  await assertVocabularyWordbookOwner(supabase, userId, wordbookId);
+  const { data, error } = await supabase
+    .from("vocabulary_words")
+    .update(patch)
+    .eq("wordbook_id", wordbookId)
+    .eq("sort_order", sortOrder)
+    .select("id");
+
+  if (error) throw error;
+  if (!data?.length) {
+    return { ok: false, error: "단어장에서 해당 단어를 찾을 수 없습니다." };
+  }
+  return { ok: true };
+}
+
 async function getKanjiIdForWord(
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
   word: string
@@ -127,6 +177,23 @@ export async function setMemorized(formData: FormData) {
     const now = getNowIso();
     const memorizedAt = memorized ? now : null;
 
+    const wbCtx = parseKanjiWordbookContext(formData);
+    if (wbCtx.wordbookId != null && wbCtx.sortOrder != null) {
+      const rowRes = await updateKanjiWordbookWordRow(
+        supabase,
+        user.id,
+        wbCtx.wordbookId,
+        wbCtx.sortOrder,
+        {
+          memorized,
+          memorized_at: memorizedAt,
+          reviewed_at: memorized ? undefined : null,
+          updated_at: now,
+        }
+      );
+      if (!rowRes.ok) return rowRes;
+    }
+
     const { error: noteError } = await supabase
       .from("vocabulary_notes")
       .update({
@@ -173,6 +240,18 @@ export async function setReviewed(formData: FormData) {
     const { supabase, user } = await getAuthedSupabase();
     const w = word.trim();
     const now = getNowIso();
+
+    const wbCtx = parseKanjiWordbookContext(formData);
+    if (wbCtx.wordbookId != null && wbCtx.sortOrder != null) {
+      const rowRes = await updateKanjiWordbookWordRow(
+        supabase,
+        user.id,
+        wbCtx.wordbookId,
+        wbCtx.sortOrder,
+        { reviewed_at: now, updated_at: now }
+      );
+      if (!rowRes.ok) return rowRes;
+    }
 
     const { error: noteError } = await supabase
       .from("vocabulary_notes")

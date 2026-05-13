@@ -65,6 +65,29 @@ export function getJlptMemorizedForQuizView(
   return row.memorized_hiragana;
 }
 
+/** 퀴즈 정답/틀림 버튼용 낙관적 UI — 서버 `setJlptWordMemorizedAction` 패치와 동일한 필드 변경 */
+export function patchJlptRowForQuizView(
+  prev: JlptWordbookRow,
+  view: JlptQuizMemorizedView,
+  value: "yes" | "no"
+): JlptWordbookRow {
+  const next = { ...prev };
+  const yes = value === "yes";
+  const ts = yes ? new Date().toISOString() : "";
+  if (view === "word") {
+    next.memorized_word = yes ? "yes" : "no";
+    next.memorized_word_at = ts;
+  } else if (view === "meaning") {
+    next.memorized_meaning = yes ? "yes" : "no";
+    next.memorized_meaning_at = ts;
+  } else {
+    next.memorized_hiragana = yes ? "yes" : "no";
+    next.memorized_hiragana_at = ts;
+  }
+  recomputeJlptAggregateFields(next);
+  return next;
+}
+
 export function getJlptMemorizedAtForQuizView(
   row: JlptWordbookRow,
   view: JlptQuizMemorizedView

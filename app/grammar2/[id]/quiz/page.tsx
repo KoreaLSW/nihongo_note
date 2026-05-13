@@ -100,7 +100,12 @@ export default async function GrammarWordbookQuizPage({ params, searchParams }: 
       ) : (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
           {rows.map((row) => (
-            <GrammarQuizCard key={`${row.no}-${row.grammar}`} row={row} memorized={row.memorized} />
+            <GrammarQuizCard
+              key={`${row.no}-${row.grammar}`}
+              wordbookId={id}
+              row={row}
+              memorized={row.memorized}
+            />
           ))}
         </div>
       )}

@@ -232,26 +232,37 @@ export type JlptKanjiCardInfo = {
   listNo: string;
 };
 
+/** PostgREST `max_rows` 등으로 한 번에 못 받을 수 있어 전 행 페이지 분할 */
+const KANJI_ITEMS_PAGE = 1000;
+
 export async function getJlptKanjiCardInfoMap(): Promise<Map<string, JlptKanjiCardInfo>> {
   const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("kanji_items")
-    .select("level,no,kanji,meaning_quoted")
-    .order("level", { ascending: false })
-    .order("no", { ascending: true });
-
-  if (error || !data) throw error ?? new Error("kanji_items query failed");
-
   const map = new Map<string, JlptKanjiCardInfo>();
-  for (const r of data) {
-    const k = String(r.kanji ?? "").trim();
-    if (!k || k.length !== 1 || map.has(k)) continue;
-    map.set(k, {
-      level: String(r.level ?? "").toUpperCase(),
-      meaningQuoted: String(r.meaning_quoted ?? "").trim(),
-      listNo: String(r.no ?? "").trim(),
-    });
+
+  for (let from = 0; ; from += KANJI_ITEMS_PAGE) {
+    const { data, error } = await supabase
+      .from("kanji_items")
+      .select("level,no,kanji,meaning_quoted")
+      .order("level", { ascending: false })
+      .order("no", { ascending: true })
+      .range(from, from + KANJI_ITEMS_PAGE - 1);
+
+    if (error) throw error;
+    if (!data?.length) break;
+
+    for (const r of data) {
+      const k = String(r.kanji ?? "").trim();
+      if (!k || k.length !== 1 || map.has(k)) continue;
+      map.set(k, {
+        level: String(r.level ?? "").toUpperCase(),
+        meaningQuoted: String(r.meaning_quoted ?? "").trim(),
+        listNo: String(r.no ?? "").trim(),
+      });
+    }
+
+    if (data.length < KANJI_ITEMS_PAGE) break;
   }
+
   return map;
 }
 

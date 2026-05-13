@@ -74,6 +74,18 @@ export async function getVocabularyWordCountsByWordbookId(): Promise<
   return counts;
 }
 
+type WordbookRowWithItemMemo = {
+  no: string;
+  word: string;
+  reading: string;
+  meaning: string;
+  level: string;
+  created_at: string;
+  memorized_item: boolean;
+  memorized_item_at: string;
+  reviewed_item_at: string;
+};
+
 function mapDbRowToWordbookRow(r: {
   sort_order?: number | string | null;
   word?: string | null;
@@ -81,7 +93,10 @@ function mapDbRowToWordbookRow(r: {
   meaning?: string | null;
   level?: string | null;
   created_at?: string | null;
-}): WordbookRow {
+  memorized?: boolean | null;
+  memorized_at?: string | null;
+  reviewed_at?: string | null;
+}): WordbookRowWithItemMemo {
   return {
     no: String(r.sort_order ?? ""),
     word: String(r.word ?? ""),
@@ -89,7 +104,22 @@ function mapDbRowToWordbookRow(r: {
     meaning: String(r.meaning ?? ""),
     level: String(r.level ?? ""),
     created_at: String(r.created_at ?? ""),
+    memorized_item: r.memorized === true,
+    memorized_item_at: r.memorized_at ? String(r.memorized_at) : "",
+    reviewed_item_at: r.reviewed_at ? String(r.reviewed_at) : "",
   };
+}
+
+/** 단어장 행 시각과 한자 진행 행 시각 중 더 최근 표시값 */
+function pickLaterIso(fromItem: string, fromKanji: string): string {
+  const i = String(fromItem ?? "").trim();
+  const k = String(fromKanji ?? "").trim();
+  const ti = Date.parse(i);
+  const tk = Date.parse(k);
+  if (!Number.isFinite(ti) && !Number.isFinite(tk)) return "";
+  if (!Number.isFinite(ti)) return k;
+  if (!Number.isFinite(tk)) return i;
+  return ti >= tk ? i : k;
 }
 
 async function kanjiProgressByTrimmedWords(
@@ -191,7 +221,9 @@ export async function getWordbookWords(wordbookId: string): Promise<WordbookRow[
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("vocabulary_words")
-    .select("id,sort_order,word,reading,meaning,level,created_at")
+    .select(
+      "id,sort_order,word,reading,meaning,level,created_at,memorized,memorized_at,reviewed_at"
+    )
     .eq("wordbook_id", wordbookId)
     .order("sort_order", { ascending: true });
 
@@ -203,20 +235,42 @@ export async function getWordbookWords(wordbookId: string): Promise<WordbookRow[
 
 async function attachKanjiProgress(
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
-  rows: WordbookRow[]
+  rows: WordbookRowWithItemMemo[]
 ): Promise<WordbookRow[]> {
   const words = rows.map((row) => row.word.trim()).filter(Boolean);
-  if (words.length === 0) return rows;
+  if (words.length === 0) {
+    return rows.map((row) => ({
+      no: row.no,
+      word: row.word,
+      reading: row.reading,
+      meaning: row.meaning,
+      level: row.level,
+      created_at: row.created_at,
+      memorized: row.memorized_item ? "yes" : "no",
+      memorized_at: row.memorized_item ? row.memorized_item_at : "",
+      reviewed_at: row.reviewed_item_at,
+    }));
+  }
 
   const progressMap = await kanjiProgressByTrimmedWords(supabase, words);
   return rows.map((row) => {
     const k = row.word.trim();
     const progress = k ? progressMap.get(k) : undefined;
+    const kanjiYes = progress?.memorized === "yes";
+    const itemYes = row.memorized_item;
+    const yes = itemYes || kanjiYes;
+    const kanjiMemoAt = progress?.memorized_at ?? "";
+    const kanjiRevAt = progress?.reviewed_at ?? "";
     return {
-      ...row,
-      memorized: progress?.memorized ?? "no",
-      memorized_at: progress?.memorized_at ?? "",
-      reviewed_at: progress?.reviewed_at ?? "",
+      no: row.no,
+      word: row.word,
+      reading: row.reading,
+      meaning: row.meaning,
+      level: row.level,
+      created_at: row.created_at,
+      memorized: yes ? "yes" : "no",
+      memorized_at: yes ? (itemYes ? row.memorized_item_at : kanjiMemoAt) : "",
+      reviewed_at: pickLaterIso(row.reviewed_item_at, kanjiRevAt),
     };
   });
 }
@@ -264,7 +318,9 @@ export async function getWordbookWordsListPage(opts: {
 
     const { data, error } = await supabase
       .from("vocabulary_words")
-      .select("id,sort_order,word,reading,meaning,level,created_at")
+      .select(
+        "id,sort_order,word,reading,meaning,level,created_at,memorized,memorized_at,reviewed_at"
+      )
       .eq("wordbook_id", wordbookId)
       .order("sort_order", { ascending: true })
       .range(from, from + perPage - 1);
@@ -279,7 +335,7 @@ export async function getWordbookWordsListPage(opts: {
 
   const { data: skeletonRaw, error: skErr } = await supabase
     .from("vocabulary_words")
-    .select("sort_order,word")
+    .select("sort_order,word,memorized,memorized_at,reviewed_at")
     .eq("wordbook_id", wordbookId)
     .order("sort_order", { ascending: true });
 
@@ -300,13 +356,15 @@ export async function getWordbookWordsListPage(opts: {
     const so = Number(row.sort_order);
     if (!Number.isFinite(so)) continue;
     const wordTrim = String(row.word ?? "").trim();
-    const m =
+    const itemYes = row.memorized === true;
+    const kanjiM =
       (wordTrim ? progressMap.get(wordTrim)?.memorized : undefined) ?? "no";
+    const yes = itemYes || kanjiM === "yes";
     if (memorizedMode === "yes") {
-      if (m !== "yes") continue;
+      if (!yes) continue;
     } else {
       /* memorizedMode === "no" */
-      if (m === "yes") continue;
+      if (yes) continue;
     }
     filtered.push({ sortOrder: so, wordTrim });
   }
@@ -324,31 +382,28 @@ export async function getWordbookWordsListPage(opts: {
 
   const { data: fullRowsRaw, error: fullErr } = await supabase
     .from("vocabulary_words")
-    .select("id,sort_order,word,reading,meaning,level,created_at")
+    .select(
+      "id,sort_order,word,reading,meaning,level,created_at,memorized,memorized_at,reviewed_at"
+    )
     .eq("wordbook_id", wordbookId)
     .in("sort_order", sortOrders);
 
   if (fullErr || !fullRowsRaw)
     throw fullErr ?? new Error("vocabulary_words full row fetch failed");
 
-  const bySort = new Map<number, WordbookRow>();
+  const bySort = new Map<number, WordbookRowWithItemMemo>();
   for (const r of fullRowsRaw) {
     const so = Number(r.sort_order);
     if (Number.isFinite(so)) bySort.set(so, mapDbRowToWordbookRow(r));
   }
 
-  const ordered: WordbookRow[] = [];
+  const orderedBase: WordbookRowWithItemMemo[] = [];
   for (const s of slice) {
     const row = bySort.get(s.sortOrder);
-    if (!row) continue;
-    const p = progressMap.get(s.wordTrim);
-    ordered.push({
-      ...row,
-      memorized: p?.memorized ?? "no",
-      memorized_at: p?.memorized_at ?? "",
-      reviewed_at: p?.reviewed_at ?? "",
-    });
+    if (row) orderedBase.push(row);
   }
+
+  const ordered = await attachKanjiProgress(supabase, orderedBase);
 
   return { words: ordered, filteredTotal, wordbookTotal, page };
 }
@@ -424,7 +479,9 @@ export async function getWordbookWordByNo(
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("vocabulary_words")
-    .select("id,sort_order,word,reading,meaning,level,created_at")
+    .select(
+      "id,sort_order,word,reading,meaning,level,created_at,memorized,memorized_at,reviewed_at"
+    )
     .eq("wordbook_id", wordbookId)
     .eq("sort_order", sortNum)
     .maybeSingle();

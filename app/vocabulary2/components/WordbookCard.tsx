@@ -177,6 +177,8 @@ export function WordbookCard({
         </div>
         <div className="flex flex-wrap gap-1" onClick={(e) => e.stopPropagation()}>
           <form onSubmit={handleMemorized} className="inline">
+            <input type="hidden" name="wordbookId" value={wordbookId} />
+            <input type="hidden" name="no" value={row.no} />
             <input type="hidden" name="word" value={row.word} />
             <input
               type="hidden"
@@ -191,6 +193,8 @@ export function WordbookCard({
             </button>
           </form>
           <form onSubmit={handleReviewed} className="inline">
+            <input type="hidden" name="wordbookId" value={wordbookId} />
+            <input type="hidden" name="no" value={row.no} />
             <input type="hidden" name="word" value={row.word} />
             <button
               type="submit"

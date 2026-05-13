@@ -64,18 +64,21 @@ export default async function QuizPage({
   let allRows: NoteRow[];
   let wordbookMeta: Awaited<ReturnType<typeof getWordbookMeta>> = null;
 
-  const mapWordbookRow = (r: {
-    no: string;
-    word: string;
-    reading?: string;
-    meaning?: string;
-    level?: string;
-    created_at?: string;
-    memorized?: string;
-    memorized_at?: string;
-    reviewed_at?: string;
-  }): NoteRow => {
-    return {
+  const mapWordbookRow = (
+    r: {
+      no: string;
+      word: string;
+      reading?: string;
+      meaning?: string;
+      level?: string;
+      created_at?: string;
+      memorized?: string;
+      memorized_at?: string;
+      reviewed_at?: string;
+    },
+    wbId?: string
+  ): NoteRow => {
+    const base: NoteRow = {
       no: r.no,
       word: r.word,
       reading: r.reading ?? "",
@@ -86,6 +89,7 @@ export default async function QuizPage({
       memorized_at: r.memorized_at ?? "",
       reviewed_at: r.reviewed_at ?? "",
     };
+    return wbId ? { ...base, wordbookId: wbId } : base;
   };
 
   if (wordbookId) {
@@ -94,7 +98,7 @@ export default async function QuizPage({
       getWordbookWords(wordbookId),
     ]);
     wordbookMeta = meta;
-    allRows = meta ? words.map((r) => mapWordbookRow(r)) : [];
+    allRows = meta ? words.map((r) => mapWordbookRow(r, wordbookId)) : [];
     const levelUpper = currentLevel === "all" ? "" : currentLevel.toUpperCase();
     if (levelUpper) {
       allRows = allRows.filter((r) => (r.level ?? "").toUpperCase() === levelUpper);
@@ -104,8 +108,9 @@ export default async function QuizPage({
     const batches = await Promise.all(wbs.map((wb) => getWordbookWords(wb.id)));
     allRows = [];
     for (let i = 0; i < wbs.length; i++) {
+      const wbId = wbs[i].id;
       for (const r of batches[i]) {
-        allRows.push(mapWordbookRow(r));
+        allRows.push(mapWordbookRow(r, wbId));
       }
     }
     const levelUpper = currentLevel === "all" ? "" : currentLevel.toUpperCase();

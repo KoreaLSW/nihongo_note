@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import { setGrammarMemorizedAction } from "@/app/actions/grammarWordbook";
 
 type Props = {
+  wordbookId: string;
+  no: string;
   row: {
     grammar: string;
     meaning: string;
@@ -12,7 +14,7 @@ type Props = {
   };
 };
 
-export function GrammarDetailActions({ row }: Props) {
+export function GrammarDetailActions({ wordbookId, no, row }: Props) {
   const router = useRouter();
 
   const handleMemorizedToggle = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -25,6 +27,8 @@ export function GrammarDetailActions({ row }: Props) {
   return (
     <div className="flex flex-wrap gap-2">
       <form onSubmit={handleMemorizedToggle} className="inline">
+        <input type="hidden" name="wordbookId" value={wordbookId} />
+        <input type="hidden" name="no" value={no} />
         <input type="hidden" name="grammar" value={row.grammar} />
         <input
           type="hidden"
